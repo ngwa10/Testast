@@ -55,8 +55,14 @@ def parse_signal(message_text):
         # Determine if this is an Anna signal
         is_anna_signal = "anna signals" in message_text.lower()
 
-        # Currency pair
-        pair_match = re.search(r'(?:Pair:|CURRENCY PAIR:|🇺🇸|📊)\s*([\w\/\-]+)', message_text)
+        # Currency pair - match more flexibly
+        pair_match = re.search(
+            r'(?:Pair:|CURRENCY PAIR:|📊|🇪🇺|🇺🇸|🇨🇭)?\s*([A-Z]{3}\/[A-Z]{3}(?:\s*OTC)?)',
+            message_text
+        )
+        if not pair_match:
+            # Try to match the format: 📊 🇪🇺 EUR/CHF 🇨🇭 OTC
+            pair_match = re.search(r'([A-Z]{3}\/[A-Z]{3}(?:\s*OTC)?)', message_text)
         if pair_match:
             result['currency_pair'] = pair_match.group(1).strip()
 
@@ -70,15 +76,15 @@ def parse_signal(message_text):
                 result['direction'] = 'SELL'
 
         # Entry time
-        entry_time_match = re.search(r'(?:Entry Time:|Entry at|TIME \(UTC-03:00\):)\s*(\d{2}:\d{2}(?::\d{2})?)', message_text)
+        entry_time_match = re.search(r'(?:Entry Time:|Entry at|TIME \(UTC-03:00\):|⏺ Entry at)\s*(\d{2}:\d{2}(?::\d{2})?)', message_text)
         if entry_time_match:
             result['entry_time'] = entry_time_match.group(1)
 
         # Timeframe
-        timeframe_match = re.search(r'Expiration:?\s*(M1|M5|1 Minute|5 Minute)', message_text)
+        timeframe_match = re.search(r'Expiration:?\s*(M1|M5|1 Minute|5 Minute|5M|1M)', message_text)
         if timeframe_match:
             tf = timeframe_match.group(1)
-            result['timeframe'] = 'M1' if tf in ['M1', '1 Minute'] else 'M5'
+            result['timeframe'] = 'M1' if tf in ['M1', '1 Minute', '1M'] else 'M5'
 
         # Default timeframe if missing
         if not result['timeframe']:
@@ -88,7 +94,10 @@ def parse_signal(message_text):
                 result['timeframe'] = 'M5'  # Other signals default to 5 minutes
 
         # Martingale times from message (if present)
-        martingale_matches = re.findall(r'(?:Level \d+|level(?: at)?|PROTECTION).*?\s*(\d{2}:\d{2})', message_text)
+        martingale_matches = re.findall(r'(?:Level \d+|level(?: at)?|PROTECTION|level At).*?\s*(\d{2}:\d{2})', message_text)
+        if not martingale_matches:
+            # Try to match "1️⃣ level At 10:35" etc
+            martingale_matches = re.findall(r'level At (\d{2}:\d{2})', message_text)
         result['martingale_times'] = martingale_matches
 
         # Default Anna signals martingale logic (2 levels)
