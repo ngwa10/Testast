@@ -55,6 +55,12 @@ echo "Running Selenium autofill..."
 python3 /home/dockuser/autofill.py &
 
 # =========================
+# Start core.py (trade execution logic)
+# =========================
+echo "Starting trading core..."
+python3 /home/dockuser/core.py &
+
+# =========================
 # Run Telegram listener with real callbacks
 # =========================
 echo "Starting Telegram listener..."
