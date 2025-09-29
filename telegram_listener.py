@@ -56,15 +56,15 @@ def parse_signal(message_text):
         is_anna_signal = "anna signals" in message_text.lower()
 
         # Currency pair - match more flexibly
-        pair_match = re.search(
-            r'(?:Pair:|CURRENCY PAIR:|📊|🇪🇺|🇺🇸|🇨🇭)?\s*([A-Z]{3}\/[A-Z]{3}(?:\s*OTC)?)',
-            message_text
-        )
-        if not pair_match:
-            # Try to match the format: 📊 🇪🇺 EUR/CHF 🇨🇭 OTC
-            pair_match = re.search(r'([A-Z]{3}\/[A-Z]{3}(?:\s*OTC)?)', message_text)
+        # This matches e.g. EUR/USD, EUR/CHF, EUR/CHF OTC, with or without emojis/OTC
+        pair_match = re.search(r'([A-Z]{3}\/[A-Z]{3}(?:\s*OTC)?)', message_text)
         if pair_match:
             result['currency_pair'] = pair_match.group(1).strip()
+        else:
+            # Try to find by known keywords
+            pair_match = re.search(r'(?:Pair:|CURRENCY PAIR:|📊)\s*([\w\/\-]+)', message_text)
+            if pair_match:
+                result['currency_pair'] = pair_match.group(1).strip()
 
         # Direction
         direction_match = re.search(r'(BUY|SELL|CALL|PUT|🔼|🟥|🟩)', message_text, re.IGNORECASE)
@@ -94,7 +94,7 @@ def parse_signal(message_text):
                 result['timeframe'] = 'M5'  # Other signals default to 5 minutes
 
         # Martingale times from message (if present)
-        martingale_matches = re.findall(r'(?:Level \d+|level(?: at)?|PROTECTION|level At).*?\s*(\d{2}:\d{2})', message_text)
+        martingale_matches = re.findall(r'(?:Level \d+|level(?: at)?|PROTECTION|level At|level)\D*(\d{2}:\d{2})', message_text)
         if not martingale_matches:
             # Try to match "1️⃣ level At 10:35" etc
             martingale_matches = re.findall(r'level At (\d{2}:\d{2})', message_text)
