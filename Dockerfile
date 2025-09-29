@@ -8,7 +8,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # Install minimal packages first
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl wget ca-certificates gnupg2 \
-    python3 git \
+    python3 python3-pip git \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Chrome (separate step to avoid timeout)
@@ -37,6 +37,13 @@ RUN git clone --depth 1 --branch v1.4.0 https://github.com/novnc/noVNC.git ${NO_
 RUN useradd -m -s /bin/bash -u 1000 dockuser \
     && mkdir -p /home/dockuser/.vnc /home/dockuser/chrome-profile \
     && chown -R dockuser:dockuser /home/dockuser
+
+# ✅ Copy Python scripts into container
+COPY autofill.py telegram_listener.py telegram_callbacks.py /home/dockuser/
+RUN chown dockuser:dockuser /home/dockuser/*.py
+
+# ✅ Install required Python packages
+RUN pip3 install --no-cache-dir selenium telethon
 
 # Copy start script
 COPY start.sh /usr/local/bin/start.sh
