@@ -5,7 +5,7 @@ set -e
 mkdir -p /home/dockuser/.vnc /home/dockuser/chrome-profile
 chmod 700 /home/dockuser/.vnc
 
-# Create xstartup script.
+# Create xstartup script
 cat > /home/dockuser/.vnc/xstartup << 'EOF'
 #!/bin/bash
 export XKL_XMODMAP_DISABLE=1
@@ -25,11 +25,8 @@ cd /opt/noVNC
 # Give the desktop some time to start
 sleep 5
 
-# Optional: clear Chrome profile if you want a fresh session each time
-# rm -rf /home/dockuser/chrome-profile/*
-
-# Start Chrome and open PocketOption login page
-echo "Starting Chrome with PocketOption login..."
+# Start Chrome and navigate to login page
+echo "Starting Chrome and opening PocketOption login..."
 export DISPLAY=:1
 google-chrome-stable "https://pocketoption.com/login" \
   --new-window \
@@ -37,8 +34,16 @@ google-chrome-stable "https://pocketoption.com/login" \
   --disable-dev-shm-usage \
   --disable-gpu \
   --start-maximized \
+  --remote-debugging-port=9222 \
   --user-data-dir=/home/dockuser/chrome-profile &
 
+# Wait for Chrome to load the page
+sleep 10
+
+# Run Selenium autofill script (this only fills credentials, no navigation)
+echo "Running Selenium autofill..."
+python3 /home/dockuser/autofill.py &
+
 # Keep the container running
-echo "All services started. Container ready!"
+echo "✅ All services started. Container ready!"
 tail -f /dev/null
