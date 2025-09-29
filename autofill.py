@@ -1,49 +1,31 @@
-#!/bin/bash
-set -e
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
+import os
+import time
 
-# Setup directories
-mkdir -p /home/dockuser/.vnc /home/dockuser/chrome-profile
-chmod 700 /home/dockuser/.vnc
+EMAIL = os.getenv("PO_EMAIL")
+PASSWORD = os.getenv("PO_PASSWORD")
 
-# Create xstartup script
-cat > /home/dockuser/.vnc/xstartup << 'EOF'
-#!/bin/bash
-export XKL_XMODMAP_DISABLE=1
-exec startxfce4
-EOF
-chmod +x /home/dockuser/.vnc/xstartup
+options = Options()
+options.debugger_address = "127.0.0.1:9222"  # attach to running Chrome
 
-# Start VNC server
-echo "Starting VNC server..."
-vncserver :1 -geometry 1280x800 -depth 24 -SecurityTypes None
+driver = webdriver.Chrome(options=options)
 
-# Start noVNC
-echo "Starting noVNC..."
-cd /opt/noVNC
-/opt/noVNC/utils/websockify/run 6080 localhost:5901 --web /opt/noVNC &
+# Wait until login page loads
+time.sleep(5)
 
-# Give the desktop some time to start
-sleep 5
+# Find fields — you might need to tweak these selectors if they change
+email_field = driver.find_element(By.NAME, "email")
+password_field = driver.find_element(By.NAME, "password")
 
-# Start Chrome and navigate to login page
-echo "Starting Chrome and opening PocketOption login..."
-export DISPLAY=:1
-google-chrome-stable "https://pocketoption.com/login" \
-  --new-window \
-  --no-sandbox \
-  --disable-dev-shm-usage \
-  --disable-gpu \
-  --start-maximized \
-  --remote-debugging-port=9222 \
-  --user-data-dir=/home/dockuser/chrome-profile &
+# Fill them
+email_field.clear()
+email_field.send_keys(EMAIL)
+password_field.clear()
+password_field.send_keys(PASSWORD)
 
-# Wait for Chrome to load the page
-sleep 10
-
-# Run Selenium autofill script (this only fills credentials, no navigation)
-echo "Running Selenium autofill..."
-python3 /home/dockuser/autofill.py &
-
-# Keep the container running
-echo "✅ All services started. Container ready!"
-tail -f /dev/null
+# Submit
+password_field.send_keys(Keys
+                         
