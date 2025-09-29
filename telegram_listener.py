@@ -37,7 +37,7 @@ def parse_signal(message_text):
     """
     Parses trading signals from a Telegram message text.
     Returns a dictionary with:
-    currency_pair, direction, entry_time, timeframe, martingale_times
+        currency_pair, direction, entry_time, timeframe, martingale_times
     """
     result = {
         "currency_pair": None,
@@ -56,12 +56,10 @@ def parse_signal(message_text):
         is_anna_signal = "anna signals" in message_text.lower()
 
         # Currency pair - match more flexibly
-        # This matches e.g. EUR/USD, EUR/CHF, EUR/CHF OTC, with or without emojis/OTC
         pair_match = re.search(r'([A-Z]{3}\/[A-Z]{3}(?:\s*OTC)?)', message_text)
         if pair_match:
             result['currency_pair'] = pair_match.group(1).strip()
         else:
-            # Try to find by known keywords
             pair_match = re.search(r'(?:Pair:|CURRENCY PAIR:|📊)\s*([\w\/\-]+)', message_text)
             if pair_match:
                 result['currency_pair'] = pair_match.group(1).strip()
@@ -88,15 +86,11 @@ def parse_signal(message_text):
 
         # Default timeframe if missing
         if not result['timeframe']:
-            if is_anna_signal:
-                result['timeframe'] = 'M1'  # Anna signals are always 1 minute
-            else:
-                result['timeframe'] = 'M5'  # Other signals default to 5 minutes
+            result['timeframe'] = 'M1' if is_anna_signal else 'M5'
 
-        # Martingale times from message (if present)
+        # Martingale times from message
         martingale_matches = re.findall(r'(?:Level \d+|level(?: at)?|PROTECTION|level At|level)\D*(\d{2}:\d{2})', message_text)
         if not martingale_matches:
-            # Try to match "1️⃣ level At 10:35" etc
             martingale_matches = re.findall(r'level At (\d{2}:\d{2})', message_text)
         result['martingale_times'] = martingale_matches
 
@@ -105,8 +99,6 @@ def parse_signal(message_text):
             fmt = "%H:%M:%S" if len(result['entry_time']) == 8 else "%H:%M"
             entry_dt = datetime.strptime(result['entry_time'], fmt)
             interval = 1  # Anna signals always M1
-
-            # First martingale at end of first trade, second at end of first martingale
             first_martingale = entry_dt + timedelta(minutes=interval)
             second_martingale = first_martingale + timedelta(minutes=interval)
             result['martingale_times'] = [
@@ -135,21 +127,24 @@ def start_telegram_listener(signal_callback, command_callback):
         try:
             text = event.message.message
 
+            # Command handling
             if text.startswith("/start") or text.startswith("/stop"):
                 logging.info(f"[💻] Command detected: {text}")
-                await command_callback(text)
+                command_callback(text)  # <-- fixed: call sync function
                 return
 
+            # Parse trading signal
             signal = parse_signal(text)
             if signal:
                 logging.info(f"[⚡] Parsed signal ready: {signal}")
-                await signal_callback(signal)
+                signal_callback(signal)  # <-- fixed: call sync function
             else:
                 logging.info("[ℹ️] Message ignored (not a valid signal).")
 
         except Exception as e:
             logging.error(f"[❌] Error handling message: {e}")
 
+    # Connect to Telegram
     try:
         logging.info("[⚙️] Connecting to Telegram...")
         client.start(bot_token=bot_token)
@@ -157,3 +152,4 @@ def start_telegram_listener(signal_callback, command_callback):
         client.run_until_disconnected()
     except Exception as e:
         logging.error(f"[❌] Telegram listener failed: {e}")
+    
