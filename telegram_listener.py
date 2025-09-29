@@ -1,7 +1,6 @@
 """
 Telegram integration: Listener and signal parser with detailed logging.
-Logs connection, message receipt, parsing steps, and errors.
-Credentials are still hardcoded for private project (for demo purposes).
+Designed for a private channel using numeric ID.
 """
 
 from telethon import TelegramClient, events
@@ -15,7 +14,7 @@ import logging
 api_id = 29630724
 api_hash = "8e12421a95fd722246e0c0b194fd3e0c"
 bot_token = "8477806088:AAGEXpIAwN5tNQM0hsCGqP-otpLJjPJLmWA"
-channel_env = "-1003033183667"  # Numeric ID or @channelname
+TARGET_CHAT_ID = -1003033183667  # Your private channel numeric ID
 
 # =========================
 # Logging Setup
@@ -30,30 +29,11 @@ logging.basicConfig(
 # Telegram Client Setup
 # =========================
 client = TelegramClient('bot_session', api_id, api_hash)
-channel_entity = None
-
-async def resolve_channel():
-    """Resolve the Telegram channel/entity before starting listener."""
-    global channel_entity
-    try:
-        if channel_env.startswith("-100") or channel_env.lstrip("-").isdigit():
-            channel_entity = await client.get_entity(int(channel_env))
-        else:
-            channel_entity = await client.get_entity(channel_env)
-        logging.info(f"[✅] Resolved channel: {getattr(channel_entity, 'title', channel_entity.id)}")
-    except Exception as e:
-        logging.error(f"[❌] Failed to resolve Telegram channel '{channel_env}': {e}")
-        raise
 
 # =========================
 # Signal Parser
 # =========================
 def parse_signal(message_text):
-    """
-    Parses trading signals from a Telegram message text.
-    Returns a dictionary with:
-    currency_pair, direction, entry_time, timeframe, martingale_times
-    """
     logging.info("[🔍] Parsing message for trading signal...")
     result = {
         "currency_pair": None,
@@ -118,16 +98,11 @@ def parse_signal(message_text):
 # Telegram Listener
 # =========================
 def start_telegram_listener(signal_callback, command_callback):
-    """Start the Telegram listener for signals and commands."""
     logging.info("[🔌] Starting Telegram listener...")
 
-    @client.on(events.NewMessage())
+    @client.on(events.NewMessage(chats=TARGET_CHAT_ID))
     async def handler(event):
         try:
-            target_id = getattr(channel_entity, 'id', None)
-            if event.chat_id != target_id:
-                return
-
             text = event.message.message
             logging.info(f"[📩] New message received: {text}")
 
@@ -147,9 +122,8 @@ def start_telegram_listener(signal_callback, command_callback):
     try:
         logging.info("[⚙️] Connecting to Telegram...")
         client.start(bot_token=bot_token)
-        logging.info("[✅] Connected to Telegram. Resolving channel...")
-        client.loop.run_until_complete(resolve_channel())
-        logging.info("[✅] Listening for messages...")
+        logging.info("[✅] Connected to Telegram. Listening for messages...")
         client.run_until_disconnected()
     except Exception as e:
         logging.error(f"[❌] Telegram listener failed: {e}")
+        
