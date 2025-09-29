@@ -1,8 +1,11 @@
 """
 Core logic for Pocket Option Telegram Trading Bot.
-Integrates with telegram_listener.py, executes trades using hotkeys via pyautogui.
+Integrates with telegram_listener.py, executes trades via pyautogui.
 Handles timezone conversion for UTC-4 and Cameroon signals to match UTC-3 broker time.
-Ready for Selenium integration to detect currency and wins/losses.
+Works with Selenium integration to:
+- Confirm asset availability
+- Stop martingale on wins
+- Skip trades if entry time elapsed
 """
 
 import time
@@ -18,6 +21,7 @@ except Exception:
     pyautogui = None
 
 from telegram_listener import client, parse_signal, events
+from selenium_integration import PocketOptionSelenium
 
 # =========================
 # Logging Setup
@@ -39,18 +43,16 @@ def convert_signal_times(entry_time_str, martingale_times, message_text):
     if message_text.endswith("💥 GET THIS SIGNAL HERE!\n💰 HOW TO START?"):
         offset = timedelta(hours=1)  # UTC-4 → UTC-3
     elif message_text.endswith("💥 TRADE THIS SIGNAL !"):
-        offset = timedelta(hours=-2)  # UTC+1 → UTC-3
+        offset = timedelta(hours=-2)  # Cameroon → UTC-3
     else:
         offset = timedelta(hours=0)  # Assume already UTC-3
 
     fmt = "%H:%M"
 
-    # Convert entry time
     entry_dt = datetime.strptime(entry_time_str, fmt)
     entry_dt += offset
     entry_time_converted = entry_dt.strftime(fmt)
 
-    # Convert martingale times
     martingale_converted = []
     for mg in martingale_times:
         mg_dt = datetime.strptime(mg, fmt)
@@ -64,11 +66,12 @@ def convert_signal_times(entry_time_str, martingale_times, message_text):
 # =========================
 class TradeManager:
     def __init__(self, base_amount=1.0, max_martingale=2):
-        self.trading_active = True  # Auto-start
+        self.trading_active = True  # auto-start
         self.base_amount = base_amount
         self.max_martingale = max_martingale
-        self.current_currency = None
-        self.martingale_stop_flags = {}  # Stop martingale per trade if Selenium detects win
+        self.martingale_stop_flags = {}  # stop martingale per trade if Selenium detects win
+        self.selenium = PocketOptionSelenium(self)
+        self.selenium.start_result_monitor()
         logger.info(f"TradeManager initialized | base_amount: {base_amount}, max_martingale: {max_martingale}")
 
     def handle_command(self, command):
@@ -90,7 +93,7 @@ class TradeManager:
             logger.info("[⏸️] Trading paused. Signal ignored.")
             return
 
-        # Apply timezone conversion
+        # Convert timezones
         entry_time, martingale_times = convert_signal_times(
             signal.get("entry_time"),
             signal.get("martingale_times", []),
@@ -101,10 +104,12 @@ class TradeManager:
 
         logger.info(f"[📡] Processing signal: {signal}")
 
-        # Immediately schedule trade
+        # Set timeframe via Selenium
+        self.selenium.set_timeframe(signal["timeframe"])
+
+        # Schedule trades
         self.schedule_trade(entry_time, signal.get("direction", "BUY"), self.base_amount, 0, signal["currency_pair"])
 
-        # Schedule martingale trades
         for i, mg_time in enumerate(signal.get("martingale_times", [])):
             if i + 1 > self.max_martingale:
                 logger.warning(f"[⚠️] Martingale level {i+1} exceeds max {self.max_martingale}; skipping.")
@@ -117,13 +122,18 @@ class TradeManager:
 
         def execute_trade():
             self.wait_until(entry_time_str)
-            # Check if Selenium stopped this martingale due to win
+
+            # Confirm asset and entry time via Selenium
+            if not self.selenium.confirm_asset_ready(currency_pair, entry_time_str):
+                logger.info(f"[🛑] Trade skipped: Asset '{currency_pair}' not ready or entry time elapsed")
+                return
+
             key = f"{currency_pair}_{martingale_level}_{entry_time_str}"
             if self.martingale_stop_flags.get(key):
-                logger.info(f"[🛑] Trade canceled (win detected by Selenium): {key}")
+                logger.info(f"[🛑] Trade skipped due to win: {key}")
                 return
+
             self.place_trade(amount, direction)
-            # For next martingale, the core will schedule normally unless Selenium sets stop
 
         threading.Thread(target=execute_trade, daemon=True).start()
 
@@ -149,11 +159,10 @@ class TradeManager:
                 pyautogui.keyDown('shift'); pyautogui.press('w'); pyautogui.keyUp('shift')
             elif direction.upper() == "SELL":
                 pyautogui.keyDown('shift'); pyautogui.press('s'); pyautogui.keyUp('shift')
-            else:
-                logger.warning(f"[⚠️] Unknown direction '{direction}'")
             logger.info(f"[✅] Trade hotkey sent: {direction}")
         except Exception as e:
             logger.error(f"[❌] Error sending trade hotkeys: {e}")
+
 
 # =========================
 # Main
@@ -179,6 +188,6 @@ def main():
     except Exception as e:
         logger.error(f"[❌] Telegram listener failed: {e}")
 
+
 if __name__ == "__main__":
     main()
-    
