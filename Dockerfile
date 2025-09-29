@@ -38,14 +38,6 @@ RUN useradd -m -s /bin/bash -u 1000 dockuser \
     && mkdir -p /home/dockuser/.vnc /home/dockuser/chrome-profile \
     && chown -R dockuser:dockuser /home/dockuser
 
-# ✅ Copy Python scripts into container
-COPY autofill.py telegram_listener.py telegram_callbacks.py /home/dockuser/
-RUN chown dockuser:dockuser /home/dockuser/*.py
-
-# ✅ Copy Python scripts into container
-COPY autofill.py telegram_listener.py telegram_callbacks.py core.py /home/dockuser/
-RUN chown dockuser:dockuser /home/dockuser/*.py
-
 
 # ✅ Install required Python packages
 RUN pip3 install --no-cache-dir selenium telethon
