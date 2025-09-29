@@ -5,7 +5,7 @@ set -e
 mkdir -p /home/dockuser/.vnc /home/dockuser/chrome-profile
 chmod 700 /home/dockuser/.vnc
 
-# Create xstartup script
+# Create xstartup script.
 cat > /home/dockuser/.vnc/xstartup << 'EOF'
 #!/bin/bash
 export XKL_XMODMAP_DISABLE=1
