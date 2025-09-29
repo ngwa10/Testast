@@ -52,6 +52,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY start.sh /usr/local/bin/start.sh
 RUN dos2unix /usr/local/bin/start.sh && chmod +x /usr/local/bin/start.sh
 
+# Copy core logic
+COPY core.py /home/dockuser/core.py
+RUN chown dockuser:dockuser /home/dockuser/core.py
+
+# Copy Telegram scripts
+COPY telegram_listener.py /home/dockuser/telegram_listener.py
+COPY telegram_callbacks.py /home/dockuser/telegram_callbacks.py
+RUN chown dockuser:dockuser /home/dockuser/telegram_listener.py /home/dockuser/telegram_callbacks.py
+
 EXPOSE 5901 6080
 
 USER dockuser
