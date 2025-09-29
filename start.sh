@@ -49,10 +49,7 @@ google-chrome-stable "https://pocketoption.com/login" \
 sleep 20
 
 # =========================
-# Run Selenium autofill script
-# =========================
-echo "Running Selenium autofill..."
-python3 /home/dockuser/autofill.py &
+# we will run a feature here that will automatically fill my password and Gmail in the pocket option login screen after chrome has launch and loaded
 
 # =========================
 # Start core.py (trade execution logic)
