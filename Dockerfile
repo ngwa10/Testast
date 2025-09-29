@@ -42,8 +42,19 @@ RUN useradd -m -s /bin/bash -u 1000 dockuser \
 COPY autofill.py telegram_listener.py telegram_callbacks.py /home/dockuser/
 RUN chown dockuser:dockuser /home/dockuser/*.py
 
+# ✅ Copy Python scripts into container
+COPY autofill.py telegram_listener.py telegram_callbacks.py core.py /home/dockuser/
+RUN chown dockuser:dockuser /home/dockuser/*.py
+
+
 # ✅ Install required Python packages
 RUN pip3 install --no-cache-dir selenium telethon
+
+# 🧰 Install pyautogui + X11 deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3-tk python3-dev scrot xclip xsel \
+    && pip3 install --no-cache-dir pyautogui pillow
+
 
 # Copy start script
 COPY start.sh /usr/local/bin/start.sh
