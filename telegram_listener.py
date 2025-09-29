@@ -52,6 +52,9 @@ def parse_signal(message_text):
         if not re.search(r'(BUY|SELL|CALL|PUT|🔼|🟥|🟩|✅ ANNA SIGNALS ✅)', message_text, re.IGNORECASE):
             return None
 
+        # Determine if this is an Anna signal
+        is_anna_signal = "anna signals" in message_text.lower()
+
         # Currency pair
         pair_match = re.search(r'(?:Pair:|CURRENCY PAIR:|🇺🇸|📊)\s*([\w\/\-]+)', message_text)
         if pair_match:
@@ -79,7 +82,7 @@ def parse_signal(message_text):
 
         # Default timeframe if missing
         if not result['timeframe']:
-            if "anna signals" in message_text.lower():
+            if is_anna_signal:
                 result['timeframe'] = 'M1'  # Anna signals are always 1 minute
             else:
                 result['timeframe'] = 'M5'  # Other signals default to 5 minutes
@@ -89,7 +92,7 @@ def parse_signal(message_text):
         result['martingale_times'] = martingale_matches
 
         # Default Anna signals martingale logic (2 levels)
-        if "anna signals" in message_text.lower() and not result['martingale_times'] and result['entry_time']:
+        if is_anna_signal and not result['martingale_times'] and result['entry_time']:
             fmt = "%H:%M:%S" if len(result['entry_time']) == 8 else "%H:%M"
             entry_dt = datetime.strptime(result['entry_time'], fmt)
             interval = 1  # Anna signals always M1
@@ -145,4 +148,3 @@ def start_telegram_listener(signal_callback, command_callback):
         client.run_until_disconnected()
     except Exception as e:
         logging.error(f"[❌] Telegram listener failed: {e}")
-                         
