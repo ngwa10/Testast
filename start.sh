@@ -32,9 +32,9 @@ cd /opt/noVNC
 sleep 5
 
 # =========================
-# Start Chrome and open PocketOption login
+# Start Chrome with remote debugging
 # =========================
-echo "Starting Chrome and opening PocketOption login..."
+echo "Starting Chrome..."
 export DISPLAY=:1
 google-chrome-stable "https://pocketoption.com/login" \
   --new-window \
@@ -45,8 +45,8 @@ google-chrome-stable "https://pocketoption.com/login" \
   --remote-debugging-port=9222 \
   --user-data-dir=/home/dockuser/chrome-profile &
 
-# Wait for Chrome to load the page
-sleep 10
+# Wait longer to ensure Chrome is fully ready
+sleep 20
 
 # =========================
 # Run Selenium autofill script
@@ -62,11 +62,9 @@ python3 - << 'PYTHON_EOF' &
 import sys
 sys.path.insert(0, '/home/dockuser')
 
-# Import your listener module
 from telegram_listener import start_telegram_listener
-from telegram_callbacks import signal_callback, command_callback  # <-- your real callbacks
+from telegram_callbacks import signal_callback, command_callback
 
-# Start the Telegram listener
 start_telegram_listener(signal_callback, command_callback)
 PYTHON_EOF
 
