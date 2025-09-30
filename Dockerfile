@@ -63,8 +63,6 @@ RUN pip3 install --no-cache-dir selenium telethon
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-tk python3-dev scrot xclip xsel \
     && pip3 install --no-cache-dir pyautogui pillow
-    
-RUN pip3 install --no-cache-dir pytz
 
 
 # Copy start script
