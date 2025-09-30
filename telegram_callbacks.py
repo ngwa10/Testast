@@ -5,8 +5,7 @@ from datetime import datetime
 async def signal_callback(signal: dict, raw_message: str = None):
     """
     Called when a trading signal is parsed from Telegram.
-    Logs both the parsed signal and the raw message.
-    Tracks the time the signal was received.
+    Logs the parsed signal and the time it was received.
     
     Example signal dict:
     {
@@ -19,9 +18,6 @@ async def signal_callback(signal: dict, raw_message: str = None):
     """
     received_time = datetime.utcnow().strftime("%H:%M:%S")
     logging.info(f"[📩] Signal received at {received_time}: {signal}")
-    
-    if raw_message:
-        logging.info(f"[📝] Raw Telegram message:\n{raw_message}")
 
 async def command_callback(cmd: str):
     """
@@ -33,3 +29,4 @@ async def command_callback(cmd: str):
         logging.info("[✅] Start command received — you could enable trading here.")
     elif cmd.startswith("/stop"):
         logging.info("[🛑] Stop command received — you could disable trading here.")
+        
