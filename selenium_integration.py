@@ -1,9 +1,9 @@
 """
 Selenium integration for Pocket Option:
 - Confirms asset for core.py
-- Confirms and toggles timeframe (M1/M5)
+- Confirms and toggles timeframe (M1/M5) based on signal
 - Detects trade results (WIN/LOSS) to stop martingale
-- Does not switch assets
+- Does not switch assets (handled by core.py)
 """
 
 import time
@@ -51,10 +51,6 @@ class PocketOptionSelenium:
     # Detect current asset
     # --------------------------
     def detect_asset(self, asset_name):
-        """
-        Checks Pocket Option UI for the currently selected asset.
-        Returns True if asset is selected.
-        """
         try:
             asset_element = self.driver.find_element(By.CSS_SELECTOR, ".asset-name-selector")
             current = asset_element.text.strip()
@@ -68,16 +64,18 @@ class PocketOptionSelenium:
     # --------------------------
     # Confirm asset ready
     # --------------------------
-    def confirm_asset_ready(self, asset_name, entry_time_str):
+    def confirm_asset_ready(self, asset_name, entry_time_str, source_tz="UTC"):
         """
-        Confirm if asset is ready and entry time not elapsed.
-        Returns True if asset is visible and entry time not elapsed.
+        Confirm if asset is visible and entry time not elapsed.
         """
         fmt = "%H:%M"
-        entry_dt = datetime.strptime(entry_time_str, fmt)
-        now = datetime.now()
-        if now > entry_dt:
-            return False  # Entry time elapsed
+        try:
+            entry_dt = datetime.strptime(entry_time_str, fmt)
+            now = datetime.now()
+            if now > entry_dt:
+                return False
+        except Exception:
+            pass
 
         return self.detect_asset(asset_name)
 
@@ -85,9 +83,6 @@ class PocketOptionSelenium:
     # Detect trade result
     # --------------------------
     def detect_trade_result(self):
-        """
-        Returns "WIN", "LOSS", or None
-        """
         try:
             result_elements = self.driver.find_elements(By.CSS_SELECTOR, ".trade-history .trade-result")
             for elem in result_elements:
@@ -116,11 +111,11 @@ class PocketOptionSelenium:
         self.monitor_thread.start()
 
     # --------------------------
-    # Set timeframe
+    # Set timeframe (M1/M5)
     # --------------------------
     def set_timeframe(self, timeframe="M1"):
         """
-        Adjust Pocket Option chart to M1 or M5
+        Adjust Pocket Option chart to M1 or M5 based on signal.
         """
         try:
             # Detect current timeframe
@@ -147,3 +142,4 @@ class PocketOptionSelenium:
 
         except Exception as e:
             print(f"[❌] Could not set timeframe: {e}")
+        
