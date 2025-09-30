@@ -8,7 +8,6 @@ from telethon import TelegramClient, events
 import re
 from datetime import datetime, timedelta
 import logging
-import sys
 
 # =========================
 # HARD-CODED CREDENTIALS
@@ -27,7 +26,6 @@ logging.basicConfig(
     datefmt='%H:%M:%S'
 )
 
-# Helper for real-time flushing
 def log_info(msg):
     logging.info(msg)
     for handler in logging.getLogger().handlers:
@@ -52,7 +50,8 @@ def parse_signal(message_text):
         "direction": None,
         "entry_time": None,
         "timeframe": None,
-        "martingale_times": []
+        "martingale_times": [],
+        "source": "OTC-3"
     }
 
     try:
@@ -60,7 +59,6 @@ def parse_signal(message_text):
             return None
 
         is_anna_signal = "anna signals" in message_text.lower()
-
         clean_text = re.sub(r'[^\x00-\x7F]+', ' ', message_text)
         pair_match = re.search(r'([A-Z]{3}/[A-Z]{3})(?:[\s_\-]?OTC)?', clean_text, re.IGNORECASE)
         if not pair_match:
@@ -93,6 +91,7 @@ def parse_signal(message_text):
         )
         result['martingale_times'] = martingale_matches
 
+        # Default Anna martingale times
         if is_anna_signal and not result['martingale_times'] and result['entry_time']:
             fmt = "%H:%M:%S" if len(result['entry_time']) == 8 else "%H:%M"
             entry_dt = datetime.strptime(result['entry_time'], fmt)
@@ -104,6 +103,14 @@ def parse_signal(message_text):
                 second_martingale.strftime(fmt)
             ]
             log_info(f"[🔁] Default Anna martingale times applied: {result['martingale_times']}")
+
+        # Detect timezone/source
+        if "💥 GET THIS SIGNAL HERE!" in message_text:
+            result["source"] = "UTC-4"
+        elif "💥 TRADE WITH DESMOND!" in message_text:
+            result["source"] = "Cameroon"
+        else:
+            result["source"] = "OTC-3"
 
         if not result['currency_pair'] or not result['entry_time'] or not result['direction']:
             return None
@@ -134,7 +141,7 @@ def start_telegram_listener(signal_callback, command_callback):
             if signal:
                 received_time = datetime.utcnow().strftime("%H:%M:%S")
                 log_info(f"[⚡] Parsed signal at {received_time}: {signal}")
-                await signal_callback(signal, raw_message=text)
+                await signal_callback(signal)  # send to core
             else:
                 log_info("[ℹ️] Message ignored (not a valid signal).")
 
@@ -148,3 +155,4 @@ def start_telegram_listener(signal_callback, command_callback):
         client.run_until_disconnected()
     except Exception as e:
         log_error(f"[❌] Telegram listener failed: {e}")
+                
