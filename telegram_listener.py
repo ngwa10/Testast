@@ -32,7 +32,7 @@ logging.basicConfig(
 client = TelegramClient('bot_session', api_id, api_hash)
 
 # =========================
-# Signal Parser (Updated)
+# Signal Parser (Fully Fixed)
 # =========================
 def parse_signal(message_text):
     result = {
@@ -53,14 +53,18 @@ def parse_signal(message_text):
         is_anna_signal = "anna signals" in message_text.lower()
 
         # --------------------------
-        # Currency pair - ignore emojis, capture OTC if present
+        # Currency pair - ignore emojis, capture OTC (any format)
         # --------------------------
         clean_text = re.sub(r'[^\x00-\x7F]+', ' ', message_text)  # remove emojis
-        pair_match = re.search(r'([A-Z]{3}/[A-Z]{3}(?:-OTC| OTC)?)', clean_text)
+        pair_match = re.search(
+            r'([A-Z]{3}/[A-Z]{3})(?:[\s_\-]?OTC)?',
+            clean_text,
+            re.IGNORECASE
+        )
         if not pair_match:
             pair_match = re.search(r'(?:Pair:|CURRENCY PAIR:|📊)\s*([\w\/\-]+)', clean_text)
         if pair_match:
-            result['currency_pair'] = pair_match.group(1).strip()
+            result['currency_pair'] = pair_match.group(0).strip()  # include OTC if present
 
         # --------------------------
         # Direction
@@ -68,9 +72,10 @@ def parse_signal(message_text):
         direction_match = re.search(r'(BUY|SELL|CALL|PUT|🔼|🟥|🟩|🔽|⏺ BUY|⏺ SELL)', message_text, re.IGNORECASE)
         if direction_match:
             direction = direction_match.group(1).upper()
+            # Correct mapping for Anna and dynamic signals
             if direction in ['CALL', 'BUY', '🟩', '🔼', '⏺ BUY']:
                 result['direction'] = 'BUY'
-            else:
+            elif direction in ['PUT', 'SELL', '🔽', '🟥', '⏺ SELL']:
                 result['direction'] = 'SELL'
 
         # --------------------------
@@ -110,7 +115,7 @@ def parse_signal(message_text):
                 first_martingale.strftime(fmt),
                 second_martingale.strftime(fmt)
             ]
-            logging.info(f"[🔁] Default Anna martingale times applied: {result['martingale_times']}")
+            logging.info(f"[🔁] Default Anna martingale times applied: {result['martingale_times']}", flush=True)
 
         # --------------------------
         # Return None if no valid signal
@@ -121,14 +126,14 @@ def parse_signal(message_text):
         return result
 
     except Exception as e:
-        logging.error(f"[❌] Error parsing signal: {e}")
+        logging.error(f"[❌] Error parsing signal: {e}", flush=True)
         return None
 
 # =========================
 # Telegram Listener
 # =========================
 def start_telegram_listener(signal_callback, command_callback):
-    logging.info("[🔌] Starting Telegram listener...")
+    logging.info("[🔌] Starting Telegram listener...", flush=True)
 
     @client.on(events.NewMessage(chats=TARGET_CHAT_ID))
     async def handler(event):
@@ -139,7 +144,7 @@ def start_telegram_listener(signal_callback, command_callback):
             # Commands
             # --------------------------
             if text.startswith("/start") or text.startswith("/stop"):
-                logging.info(f"[💻] Command detected: {text}")
+                logging.info(f"[💻] Command detected: {text}", flush=True)
                 await command_callback(text)
                 return
 
@@ -148,18 +153,20 @@ def start_telegram_listener(signal_callback, command_callback):
             # --------------------------
             signal = parse_signal(text)
             if signal:
-                logging.info(f"[⚡] Parsed signal ready: {signal}")
+                received_time = datetime.utcnow().strftime("%H:%M:%S")
+                logging.info(f"[⚡] Parsed signal at {received_time}: {signal}", flush=True)
                 await signal_callback(signal, raw_message=text)
             else:
-                logging.info("[ℹ️] Message ignored (not a valid signal).")
+                logging.info("[ℹ️] Message ignored (not a valid signal).", flush=True)
 
         except Exception as e:
-            logging.error(f"[❌] Error handling message: {e}")
+            logging.error(f"[❌] Error handling message: {e}", flush=True)
 
     try:
-        logging.info("[⚙️] Connecting to Telegram...")
+        logging.info("[⚙️] Connecting to Telegram...", flush=True)
         client.start(bot_token=bot_token)
-        logging.info("[✅] Connected to Telegram. Listening for messages...")
+        logging.info("[✅] Connected to Telegram. Listening for messages...", flush=True)
         client.run_until_disconnected()
     except Exception as e:
-        logging.error(f"[❌] Telegram listener failed: {e}")
+        logging.error(f"[❌] Telegram listener failed: {e}", flush=True)
+            
