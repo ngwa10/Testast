@@ -5,7 +5,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     VNC_RESOLUTION=1280x800 \
     NO_VNC_HOME=/opt/noVNC
 
-# Install minimal packages first
+# Install minimal packages first.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl wget ca-certificates gnupg2 \
     python3 python3-pip git \
