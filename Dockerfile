@@ -51,6 +51,7 @@ RUN useradd -m -s /bin/bash -u 1000 dockuser \
 # ✅ Install required Python packages
 RUN pip3 install --no-cache-dir pytz
 RUN pip3 install --no-cache-dir selenium telethon
+RUN pip3 install --no-cache-dir numpy
 
 # 🧰 Install pyautogui + X11 deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -73,6 +74,11 @@ RUN chown dockuser:dockuser /home/dockuser/core.py
 COPY telegram_listener.py /home/dockuser/telegram_listener.py
 COPY telegram_callbacks.py /home/dockuser/telegram_callbacks.py
 RUN chown dockuser:dockuser /home/dockuser/telegram_listener.py /home/dockuser/telegram_callbacks.py
+
+# ✅ Copy utility and log files
+COPY core_utils.py /home/dockuser/core_utils.py
+COPY logs.json /home/dockuser/logs.json
+RUN chown dockuser:dockuser /home/dockuser/core_utils.py /home/dockuser/logs.json
 
 EXPOSE 5901 6080
 
