@@ -24,8 +24,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install ChromeDriver
 # -------------------------
 # -------------------------
-# -------------------------
-# -------------------------
 # Install ChromeDriver (auto-match installed Chrome version)
 # -------------------------
 RUN CHROME_VERSION=$(google-chrome --version | sed 's/[^0-9.]//g' | cut -d. -f1) \
