@@ -68,6 +68,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY start.sh /usr/local/bin/start.sh
 RUN dos2unix /usr/local/bin/start.sh && chmod +x /usr/local/bin/start.sh
 
+# Copy Selenium test script
+COPY test_selenium.py /home/dockuser/test_selenium.py
+RUN chown dockuser:dockuser /home/dockuser/test_selenium.py
+
+
 # Copy core logic
 COPY core.py /home/dockuser/core.py
 RUN chown dockuser:dockuser /home/dockuser/core.py
