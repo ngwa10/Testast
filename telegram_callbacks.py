@@ -1,10 +1,14 @@
 # telegram_callbacks.py
 import logging
+from datetime import datetime
 
-async def signal_callback(signal: dict):
+async def signal_callback(signal: dict, raw_message: str = None):
     """
     Called when a trading signal is parsed from Telegram.
-    The 'signal' dict might look like:
+    Logs both the parsed signal and the raw message.
+    Tracks the time the signal was received.
+    
+    Example signal dict:
     {
         "currency_pair": "EUR/USD",
         "direction": "BUY",
@@ -13,7 +17,11 @@ async def signal_callback(signal: dict):
         "martingale_times": ["14:31", "14:32"]
     }
     """
-    logging.info(f"[📩] New trading signal received: {signal}")
+    received_time = datetime.utcnow().strftime("%H:%M:%S")
+    logging.info(f"[📩] Signal received at {received_time}: {signal}")
+    
+    if raw_message:
+        logging.info(f"[📝] Raw Telegram message:\n{raw_message}")
 
 async def command_callback(cmd: str):
     """
