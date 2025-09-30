@@ -9,14 +9,14 @@ Core logic for Pocket Option Telegram Trading Bot.
 
 import time
 import threading
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import logging
+import random
 import pyautogui
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
-import random
 
 # =========================
 # Logging Setup
@@ -68,40 +68,98 @@ class TradeManager:
         # Schedule direct trade
         entry_time = signal.get("entry_time")
         if entry_time:
-            threading.Thread(target=self.execute_trade, args=(entry_time, signal, 0), daemon=True).start()
+            threading.Thread(target=self._run_scheduled_trade, args=(entry_time, signal, 0), daemon=True).start()
 
         # Schedule martingale trades
         for i, mg_time in enumerate(signal.get("martingale_times", [])):
             if i + 1 > self.max_martingale:
                 logger.warning(f"[⚠️] Martingale level {i+1} exceeds max {self.max_martingale}; skipping.")
                 break
-            threading.Thread(target=self.execute_trade, args=(mg_time, signal, i+1), daemon=True).start()
+            threading.Thread(target=self._run_scheduled_trade, args=(mg_time, signal, i+1), daemon=True).start()
 
     # --------------------------
-    # Execute a single trade
+    # Scheduled trade execution
     # --------------------------
-    def execute_trade(self, entry_time_str, signal, martingale_level):
-        # Wait until entry time
-        fmt = "%H:%M"
-        try:
-            entry_dt = datetime.strptime(entry_time_str, fmt)
-            now = datetime.now()
-            delay = (entry_dt - now).total_seconds()
-            if delay > 0:
-                logger.info(f"[⏰] Waiting {delay:.2f}s until trade entry")
-                time.sleep(delay)
-        except Exception as e:
-            logger.warning(f"[⚠️] Could not parse entry_time '{entry_time_str}': {e}")
+    def _run_scheduled_trade(self, entry_time_str, signal, martingale_level):
+        cp = signal["currency_pair"]
+        tf = signal["timeframe"]
+        direction = signal["direction"]
+
+        # Determine timezone offset based on signal source
+        raw_text = signal.get("source_text", "")
+        tz_offset = None
+        if "💥 GET THIS SIGNAL HERE!" in raw_text or "💰 HOW TO START" in raw_text:
+            tz_offset = -4  # UTC-4
+        elif "💥 TRADE WITH DESMOND!" in raw_text:
+            tz_offset = -3  # Cameroon
+        else:
+            tz_offset = -3  # default
+
+        entry_dt_local = datetime.strptime(entry_time_str, "%H:%M")
+        now_utc = datetime.now(timezone.utc)
+        entry_dt = datetime(
+            now_utc.year, now_utc.month, now_utc.day,
+            entry_dt_local.hour, entry_dt_local.minute,
+            tzinfo=timezone(timedelta(hours=tz_offset))
+        )
+        entry_dt = entry_dt.astimezone(timezone.utc)
+
+        # Don't schedule trades too far in the future
+        if (entry_dt - now_utc).total_seconds() > 600:
+            logger.info(f"[⏱️] Signal {cp} entry time too far in future ({entry_dt.isoformat()}). Skipping trade.")
             return
 
-        # Confirm asset ready via Selenium
-        asset_ready = selenium_integration.confirm_asset_ready(signal["currency_pair"], signal["timeframe"], entry_time_str)
-        if not asset_ready:
-            logger.info(f"[⏹️] Asset {signal['currency_pair']} not ready or entry time elapsed, skipping trade.")
-            return
+        # Wait until entry time if close
+        delay = (entry_dt - now_utc).total_seconds()
+        if delay > 0:
+            logger.info(f"[⏰] Waiting {delay:.2f}s until trade entry for {cp} (level {martingale_level})")
+            time.sleep(min(delay, 10))  # max 10s sleep here, rest handled by firing loop
 
-        # Place trade
-        self.place_trade(signal.get("direction", "BUY"), martingale_level)
+        # --------------------------
+        # Start firing switching strokes
+        # --------------------------
+        logger.info(f"[🔄] Beginning asset-switch firing loop for {cp} (level {martingale_level}). Firing every 5–9s randomly.")
+        confirmed = False
+        while True:
+            now_utc = datetime.now(timezone.utc)
+            if now_utc >= entry_dt:
+                logger.info(f"[⚠️] Entry time {entry_dt.isoformat()} reached before asset confirmed for {cp} (level {martingale_level}). Trade expired.")
+                confirmed = False
+                break
+
+            # Fire switching stroke
+            try:
+                self._fire_switch_keystroke(cp)
+                logger.info(f"[🔥] Firing currency switching strokes for {cp} (level {martingale_level})")
+            except Exception as e:
+                logger.warning(f"[⚠️] Error firing switch keystroke: {e}")
+
+            # Allow Selenium a short time to confirm
+            time.sleep(1)
+            try:
+                if selenium_integration.confirm_asset_ready(cp, tf, entry_dt.astimezone(timezone.utc).strftime("%H:%M")):
+                    confirmed = True
+                    logger.info(f"[✅] Asset {cp} confirmed by Selenium. Stopped firing switching strokes.")
+                    break
+            except Exception as e:
+                logger.warning(f"[⚠️] Selenium check failed: {e}")
+
+            # Random sleep 5–9s but don't overshoot entry time
+            remaining = (entry_dt - datetime.now(timezone.utc)).total_seconds()
+            if remaining <= 0:
+                logger.info(f"[⚠️] Entry time reached while waiting for asset confirmation for {cp}. Trade expired.")
+                confirmed = False
+                break
+            sleep_sec = min(random.randint(5, 9), max(0.2, remaining))
+            time.sleep(sleep_sec)
+
+        # --------------------------
+        # Place trade if asset confirmed
+        # --------------------------
+        if confirmed:
+            self.place_trade(direction, martingale_level)
+        else:
+            logger.info(f"[⚠️] Trade for {cp} at level {martingale_level} expired (not executed)")
 
     # --------------------------
     # Place trade via pyautogui
@@ -114,9 +172,7 @@ class TradeManager:
                 pyautogui.keyDown('shift'); pyautogui.press('w'); pyautogui.keyUp('shift')
             elif direction.upper() == "SELL":
                 pyautogui.keyDown('shift'); pyautogui.press('s'); pyautogui.keyUp('shift')
-            else:
-                logger.warning(f"[⚠️] Unknown direction '{direction}'")
-            logger.info(f"[✅] Trade hotkey sent: {direction}")
+            logger.info(f"[🔥] Just fired a {direction} stroke for trade (level {martingale_level})")
         except Exception as e:
             logger.error(f"[❌] Error sending trade hotkeys: {e}")
 
@@ -149,23 +205,17 @@ class PocketOptionSelenium:
         logger.info("[✅] Chrome started and navigated to Pocket Option login.")
         return driver
 
-    # --------------------------
-    # Confirm asset and timeframe
-    # --------------------------
     def confirm_asset_ready(self, asset_name, timeframe, entry_time_str):
         fmt = "%H:%M"
-        entry_dt = datetime.strptime(entry_time_str, fmt)
-        now = datetime.now()
-        if now > entry_dt:
-            return False
         try:
-            # Check current asset
+            entry_dt = datetime.strptime(entry_time_str, fmt)
+            now = datetime.now()
+            if now > entry_dt:
+                return False
             asset_element = self.driver.find_element(By.CSS_SELECTOR, ".asset-name-selector")
             current_asset = asset_element.text.strip()
             if current_asset != asset_name:
-                return False  # Wait for core to switch assets
-
-            # Check timeframe and adjust if needed
+                return False
             self.set_timeframe(timeframe)
             return True
         except Exception:
@@ -179,14 +229,10 @@ class PocketOptionSelenium:
                 dropdown.click()
                 option = self.driver.find_element(By.XPATH, f"//li[contains(text(), '{timeframe}')]")
                 option.click()
-                # Click outside randomly to close dropdown
                 pyautogui.click(random.randint(100, 300), random.randint(100, 300))
         except Exception:
             pass
 
-    # --------------------------
-    # Detect trade result
-    # --------------------------
     def detect_trade_result(self):
         try:
             results = self.driver.find_elements(By.CSS_SELECTOR, ".trade-history .trade-result")
@@ -215,3 +261,4 @@ class PocketOptionSelenium:
 # =========================
 trade_manager = TradeManager()
 selenium_integration = PocketOptionSelenium(trade_manager)
+                             
