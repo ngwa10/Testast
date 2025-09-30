@@ -25,14 +25,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # -------------------------
 # -------------------------
 # -------------------------
-# Install ChromeDriver (match installed Chrome version)
+# -------------------------
+# Install ChromeDriver (auto-match installed Chrome version)
 # -------------------------
 RUN CHROME_VERSION=$(google-chrome --version | sed 's/[^0-9.]//g' | cut -d. -f1) \
     && LATEST_URL=$(curl -s "https://googlechromelabs.github.io/chrome-for-testing/LATEST_RELEASE_${CHROME_VERSION}") \
     && wget -O /tmp/chromedriver.zip "https://storage.googleapis.com/chrome-for-testing-public/${LATEST_URL}/linux64/chromedriver-linux64.zip" \
     && unzip /tmp/chromedriver.zip -d /usr/local/bin/ \
+    && mv /usr/local/bin/chromedriver-linux64/chromedriver /usr/local/bin/chromedriver \
     && chmod +x /usr/local/bin/chromedriver \
-    && rm /tmp/chromedriver.zip
+    && rm -rf /tmp/chromedriver.zip /usr/local/bin/chromedriver-linux64
+
 
 # Install VNC and desktop (minimal XFCE)
 RUN apt-get update && apt-get install -y --no-install-recommends \
