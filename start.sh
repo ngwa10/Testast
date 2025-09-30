@@ -28,38 +28,21 @@ echo "Starting noVNC..."
 cd /opt/noVNC
 /opt/noVNC/utils/websockify/run 6080 localhost:5901 --web /opt/noVNC &
 
-# Give the desktop some time to start
+# Give desktop some time to start
 sleep 5
 
 # =========================
-# Start Chrome with remote debugging
-# =========================
-echo "Starting Chrome..."
-export DISPLAY=:1
-google-chrome-stable "https://pocketoption.com/en/login/" \
-  --new-window \
-  --no-sandbox \
-  --disable-dev-shm-usage \
-  --disable-gpu \
-  --start-maximized \
-  --remote-debugging-port=9222 \
-  --user-data-dir=/home/dockuser/chrome-profile &
-
-# Wait for Chrome to fully start
-sleep 20
-
-# =========================
-# Run Selenium auto-login test
+# Run Selenium auto-login
 # =========================
 echo "[🧪] Running Selenium auto-login test..."
 python3 /home/dockuser/test_selenium.py
 SELENIUM_EXIT=$?
 
 if [ $SELENIUM_EXIT -ne 0 ]; then
-  echo "[❌] Selenium test / auto-login failed! Stopping container..."
+  echo "[❌] Selenium auto-login failed! Stopping container..."
   exit 1
 else
-  echo "[✅] Selenium test passed! Continuing startup..."
+  echo "[✅] Selenium auto-login passed! Continuing startup..."
 fi
 
 # =========================
@@ -69,7 +52,7 @@ echo "Starting trading core..."
 python3 /home/dockuser/core.py &
 
 # =========================
-# Start Telegram listener with real callbacks
+# Start Telegram listener with callbacks
 # =========================
 echo "Starting Telegram listener..."
 python3 - << 'PYTHON_EOF' &
@@ -83,7 +66,7 @@ start_telegram_listener(signal_callback, command_callback)
 PYTHON_EOF
 
 # =========================
-# Keep the container running
+# Keep container running
 # =========================
 echo "✅ All services started. Container ready!"
 tail -f /dev/null
