@@ -26,13 +26,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # -------------------------
 # Install ChromeDriver (latest stable)
 # -------------------------
-RUN LATEST_DRIVER=$(curl -sS https://chromedriver.storage.googleapis.com/LATEST_RELEASE) \
-    && echo "Installing ChromeDriver version $LATEST_DRIVER" \
-    && wget -O /tmp/chromedriver.zip "https://chromedriver.storage.googleapis.com/${LATEST_DRIVER}/chromedriver_linux64.zip" \
+RUN wget -O /tmp/chromedriver.zip https://chromedriver.storage.googleapis.com/114.0.5735.90/chromedriver_linux64.zip \
     && unzip /tmp/chromedriver.zip -d /usr/local/bin/ \
     && chmod +x /usr/local/bin/chromedriver \
     && rm /tmp/chromedriver.zip
-
+    
 # Install VNC and desktop (minimal XFCE)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tigervnc-standalone-server \
