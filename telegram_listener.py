@@ -8,6 +8,7 @@ from telethon import TelegramClient, events
 import re
 from datetime import datetime, timedelta
 import logging
+import sys
 
 # =========================
 # HARD-CODED CREDENTIALS
@@ -26,13 +27,24 @@ logging.basicConfig(
     datefmt='%H:%M:%S'
 )
 
+# Helper for real-time flushing
+def log_info(msg):
+    logging.info(msg)
+    for handler in logging.getLogger().handlers:
+        handler.flush()
+
+def log_error(msg):
+    logging.error(msg)
+    for handler in logging.getLogger().handlers:
+        handler.flush()
+
 # =========================
 # Telegram Client Setup
 # =========================
 client = TelegramClient('bot_session', api_id, api_hash)
 
 # =========================
-# Signal Parser (Fully Fixed)
+# Signal Parser
 # =========================
 def parse_signal(message_text):
     result = {
@@ -44,50 +56,30 @@ def parse_signal(message_text):
     }
 
     try:
-        # --------------------------
-        # Ignore messages that are not signals
-        # --------------------------
         if not re.search(r'(BUY|SELL|CALL|PUT|🔼|🟥|🟩|🔽|✅ ANNA SIGNALS ✅|_OTC)', message_text, re.IGNORECASE):
             return None
 
         is_anna_signal = "anna signals" in message_text.lower()
 
-        # --------------------------
-        # Currency pair - ignore emojis, capture OTC (any format)
-        # --------------------------
-        clean_text = re.sub(r'[^\x00-\x7F]+', ' ', message_text)  # remove emojis
-        pair_match = re.search(
-            r'([A-Z]{3}/[A-Z]{3})(?:[\s_\-]?OTC)?',
-            clean_text,
-            re.IGNORECASE
-        )
+        clean_text = re.sub(r'[^\x00-\x7F]+', ' ', message_text)
+        pair_match = re.search(r'([A-Z]{3}/[A-Z]{3})(?:[\s_\-]?OTC)?', clean_text, re.IGNORECASE)
         if not pair_match:
             pair_match = re.search(r'(?:Pair:|CURRENCY PAIR:|📊)\s*([\w\/\-]+)', clean_text)
         if pair_match:
-            result['currency_pair'] = pair_match.group(0).strip()  # include OTC if present
+            result['currency_pair'] = pair_match.group(0).strip()
 
-        # --------------------------
-        # Direction
-        # --------------------------
         direction_match = re.search(r'(BUY|SELL|CALL|PUT|🔼|🟥|🟩|🔽|⏺ BUY|⏺ SELL)', message_text, re.IGNORECASE)
         if direction_match:
             direction = direction_match.group(1).upper()
-            # Correct mapping for Anna and dynamic signals
             if direction in ['CALL', 'BUY', '🟩', '🔼', '⏺ BUY']:
                 result['direction'] = 'BUY'
             elif direction in ['PUT', 'SELL', '🔽', '🟥', '⏺ SELL']:
                 result['direction'] = 'SELL'
 
-        # --------------------------
-        # Entry time
-        # --------------------------
         entry_time_match = re.search(r'(?:Entry Time:|Entry at|TIME \(UTC.*\):|⏺ Entry at)\s*(\d{2}:\d{2})', message_text)
         if entry_time_match:
             result['entry_time'] = entry_time_match.group(1)
 
-        # --------------------------
-        # Timeframe / Expiration
-        # --------------------------
         timeframe_match = re.search(r'Expiration:?\s*(M1|M5|1 Minute|5 Minute|5M|1M|5-minute)', message_text, re.IGNORECASE)
         if timeframe_match:
             tf = timeframe_match.group(1).lower()
@@ -95,78 +87,64 @@ def parse_signal(message_text):
         if not result['timeframe']:
             result['timeframe'] = 'M1' if is_anna_signal else 'M5'
 
-        # --------------------------
-        # Martingale times / Protection
-        # --------------------------
         martingale_matches = re.findall(
             r'(?:Level \d+|level(?: at)?|PROTECTION|level At|level|ª PROTECTION)\D*[:\-\—>]*\s*(\d{2}:\d{2})',
             message_text, re.IGNORECASE
         )
         result['martingale_times'] = martingale_matches
 
-        # Default Anna martingale if none found
         if is_anna_signal and not result['martingale_times'] and result['entry_time']:
             fmt = "%H:%M:%S" if len(result['entry_time']) == 8 else "%H:%M"
             entry_dt = datetime.strptime(result['entry_time'], fmt)
-            interval = 1  # Anna signals always M1
+            interval = 1
             first_martingale = entry_dt + timedelta(minutes=interval)
             second_martingale = first_martingale + timedelta(minutes=interval)
             result['martingale_times'] = [
                 first_martingale.strftime(fmt),
                 second_martingale.strftime(fmt)
             ]
-            logging.info(f"[🔁] Default Anna martingale times applied: {result['martingale_times']}", flush=True)
+            log_info(f"[🔁] Default Anna martingale times applied: {result['martingale_times']}")
 
-        # --------------------------
-        # Return None if no valid signal
-        # --------------------------
         if not result['currency_pair'] or not result['entry_time'] or not result['direction']:
             return None
 
         return result
 
     except Exception as e:
-        logging.error(f"[❌] Error parsing signal: {e}", flush=True)
+        log_error(f"[❌] Error parsing signal: {e}")
         return None
 
 # =========================
 # Telegram Listener
 # =========================
 def start_telegram_listener(signal_callback, command_callback):
-    logging.info("[🔌] Starting Telegram listener...", flush=True)
+    log_info("[🔌] Starting Telegram listener...")
 
     @client.on(events.NewMessage(chats=TARGET_CHAT_ID))
     async def handler(event):
         try:
             text = event.message.message
 
-            # --------------------------
-            # Commands
-            # --------------------------
             if text.startswith("/start") or text.startswith("/stop"):
-                logging.info(f"[💻] Command detected: {text}", flush=True)
+                log_info(f"[💻] Command detected: {text}")
                 await command_callback(text)
                 return
 
-            # --------------------------
-            # Parse signals
-            # --------------------------
             signal = parse_signal(text)
             if signal:
                 received_time = datetime.utcnow().strftime("%H:%M:%S")
-                logging.info(f"[⚡] Parsed signal at {received_time}: {signal}", flush=True)
+                log_info(f"[⚡] Parsed signal at {received_time}: {signal}")
                 await signal_callback(signal, raw_message=text)
             else:
-                logging.info("[ℹ️] Message ignored (not a valid signal).", flush=True)
+                log_info("[ℹ️] Message ignored (not a valid signal).")
 
         except Exception as e:
-            logging.error(f"[❌] Error handling message: {e}", flush=True)
+            log_error(f"[❌] Error handling message: {e}")
 
     try:
-        logging.info("[⚙️] Connecting to Telegram...", flush=True)
+        log_info("[⚙️] Connecting to Telegram...")
         client.start(bot_token=bot_token)
-        logging.info("[✅] Connected to Telegram. Listening for messages...", flush=True)
+        log_info("[✅] Connected to Telegram. Listening for messages...")
         client.run_until_disconnected()
     except Exception as e:
-        logging.error(f"[❌] Telegram listener failed: {e}", flush=True)
-            
+        log_error(f"[❌] Telegram listener failed: {e}")
