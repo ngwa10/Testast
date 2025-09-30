@@ -215,4 +215,3 @@ class PocketOptionSelenium:
 # =========================
 trade_manager = TradeManager()
 selenium_integration = PocketOptionSelenium(trade_manager)
-        
