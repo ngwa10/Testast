@@ -23,9 +23,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # -------------------------
 # Install ChromeDriver
 # -------------------------
-RUN CHROME_VERSION=$(google-chrome-stable --version | grep -oP '\d+\.\d+\.\d+') \
-    && echo "Installing ChromeDriver for Chrome version: $CHROME_VERSION" \
-    && wget -O /tmp/chromedriver.zip "https://chromedriver.storage.googleapis.com/${CHROME_VERSION}/chromedriver_linux64.zip" \
+# -------------------------
+# Install ChromeDriver (latest stable)
+# -------------------------
+RUN LATEST_DRIVER=$(curl -sS https://chromedriver.storage.googleapis.com/LATEST_RELEASE) \
+    && echo "Installing ChromeDriver version $LATEST_DRIVER" \
+    && wget -O /tmp/chromedriver.zip "https://chromedriver.storage.googleapis.com/${LATEST_DRIVER}/chromedriver_linux64.zip" \
     && unzip /tmp/chromedriver.zip -d /usr/local/bin/ \
     && chmod +x /usr/local/bin/chromedriver \
     && rm /tmp/chromedriver.zip
