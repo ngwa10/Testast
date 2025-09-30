@@ -32,31 +32,41 @@ service = Service("/usr/local/bin/chromedriver")
 driver = webdriver.Chrome(service=service, options=options)
 wait = WebDriverWait(driver, 20)
 
+# --------------------------
+# Human-like typing function
+# --------------------------
+def human_typing(element, text, delay=0.1):
+    """Type like a human, character by character, using JS to set value."""
+    for char in text:
+        # Append char via JS (prevents site JS from clearing)
+        driver.execute_script("arguments[0].value += arguments[1];", element, char)
+        element.send_keys(char)  # triggers normal input events
+        time.sleep(delay)
+
 try:
+    # --------------------------
+    # Navigate to Pocket Option login
+    # --------------------------
     driver.get("https://pocketoption.com/en/login/")
 
     # --------------------------
-    # Email field
+    # Email input
     # --------------------------
     email_input = wait.until(EC.element_to_be_clickable((By.NAME, "email")))
     email_input.click()
-    time.sleep(0.2)
-    email_input.clear()
-    email_input.send_keys(EMAIL)
-    email_input.send_keys(Keys.TAB)  # trigger JS events
+    human_typing(email_input, EMAIL, delay=0.05)
+    email_input.send_keys(Keys.TAB)  # triggers site events
 
     # --------------------------
-    # Password field
+    # Password input
     # --------------------------
     password_input = wait.until(EC.element_to_be_clickable((By.NAME, "password")))
     password_input.click()
-    time.sleep(0.2)
 
-    # Force password visibility in VNC
+    # Force visibility for VNC
     driver.execute_script("arguments[0].type='text';", password_input)
 
-    password_input.clear()
-    password_input.send_keys(PASSWORD)
+    human_typing(password_input, PASSWORD, delay=0.05)
 
     # --------------------------
     # Login button
@@ -75,4 +85,3 @@ except Exception as e:
 
 finally:
     driver.quit()
-    
