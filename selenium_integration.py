@@ -1,5 +1,5 @@
 """
-Final selenium_integration.py — PocketOptionSelenium (updated).
+Final selenium_integration.py — PocketOptionSelenium (updated with .env login support).
 
 - Uses a unique --user-data-dir per session (UUID) to avoid "already in use" errors.
 - Uses signal's original timezone for scheduling and entry checks (no Jakarta time).
@@ -9,7 +9,7 @@ Final selenium_integration.py — PocketOptionSelenium (updated).
     - detect_trade_result() -> scans trade history
     - start_result_monitor() -> background thread to detect results and callback to core
     - watch_trade_for_result(currency_pair, placed_at) -> targeted watcher
-- When a result is detected, calls: trade_manager.on_trade_result(currency_pair, result)
+- Automatically fills login email & password from .env file into Pocket Option login page
 """
 
 import time
@@ -18,13 +18,25 @@ import random
 import uuid
 from datetime import datetime, timedelta
 import pytz
+import os
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 import pyautogui
+from dotenv import load_dotenv  # ✅ NEW
 
 CHECK_INTERVAL = 0.5  # seconds
+
+# ✅ Load credentials from .env
+load_dotenv()
+EMAIL = os.getenv("EMAIL")
+PASSWORD = os.getenv("PASSWORD")
+
+if not EMAIL or not PASSWORD:
+    raise ValueError("[❌] EMAIL or PASSWORD not found in .env file. Please set them before running.")
 
 class PocketOptionSelenium:
     def __init__(self, trade_manager, headless=False):
@@ -59,6 +71,31 @@ class PocketOptionSelenium:
             logger.info("[✅] Chrome started and navigated to Pocket Option login.")
         else:
             print("[✅] Chrome started and navigated to Pocket Option login.")
+
+        # -----------------------
+        # 🔐 Auto-fill login credentials from .env
+        # -----------------------
+        try:
+            wait = WebDriverWait(driver, 30)
+            email_field = wait.until(EC.presence_of_element_located((By.NAME, "email")))
+            password_field = wait.until(EC.presence_of_element_located((By.NAME, "password")))
+
+            # Clear and input credentials
+            email_field.clear()
+            email_field.send_keys(EMAIL)
+            password_field.clear()
+            password_field.send_keys(PASSWORD)
+
+            # Optional: Click login button automatically
+            try:
+                login_button = driver.find_element(By.CSS_SELECTOR, "button[type='submit']")
+                login_button.click()
+                print("[🔐] Credentials entered and login button clicked automatically.")
+            except Exception:
+                print("[ℹ️] Credentials filled, but login button not found. Please click manually.")
+        except Exception as e:
+            print(f"[⚠️] Auto-login failed: {e}")
+
         return driver
 
     # -----------------
@@ -74,7 +111,6 @@ class PocketOptionSelenium:
 
     # -----------------
     # Confirm if asset ready and entry time not elapsed
-    # entry_time_dt: timezone-aware datetime in signal's tz
     # -----------------
     def confirm_asset_ready(self, asset_name, entry_time_dt):
         try:
@@ -158,3 +194,4 @@ class PocketOptionSelenium:
                     return
                 time.sleep(0.5)
         threading.Thread(target=watch, daemon=True).start()
+        
