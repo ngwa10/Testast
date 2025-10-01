@@ -1,17 +1,25 @@
 #!/bin/bash
+set -e
 
+# --------------------------
 # Simple healthcheck script
-# Check if VNC server is running
+# --------------------------
+
+# Check VNC server
 if ! pgrep -f "Xvnc\|vncserver" > /dev/null; then
-    echo "VNC server not running"
+    echo "[❌] VNC server not running"
     exit 1
+else
+    echo "[✅] VNC server is running"
 fi
 
-# Check if noVNC/websockify is running  
+# Check noVNC/websockify
 if ! pgrep -f "websockify" > /dev/null; then
-    echo "noVNC/websockify not running"
+    echo "[❌] noVNC/websockify not running"
     exit 1
+else
+    echo "[✅] noVNC/websockify is running"
 fi
 
-echo "Services are healthy"
+echo "[ℹ️] All services healthy"
 exit 0
