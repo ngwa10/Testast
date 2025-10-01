@@ -141,43 +141,45 @@ class TradeManager:
     # Execute single trade
     # -----------------
     def execute_trade(self, entry_dt, signal, martingale_level):
-        delay = (entry_dt - datetime.now(entry_dt.tzinfo)).total_seconds()
-        if delay > 0:
-            fmt = "%H:%M"
-            logger.info(f"[⏰] Waiting {delay:.1f}s until {entry_dt.strftime(fmt)} (level {martingale_level}) for {signal['currency_pair']}")
-            time.sleep(delay)
-        else:
-            logger.info(f"[⏹️] Signal entry time {entry_dt.strftime('%H:%M')} passed. Skipping trade for {signal['currency_pair']}.")
-            return
-
         currency = signal['currency_pair']
         direction = signal.get('direction', 'BUY')
         timeframe = signal.get('timeframe', 'M1')
 
+        # Wait until entry time minus 20 seconds
+        now = datetime.now(entry_dt.tzinfo)
+        wait_until = entry_dt - timedelta(seconds=20)
+        delay = (wait_until - now).total_seconds()
+        if delay > 0:
+            fmt = "%H:%M:%S"
+            logger.info(f"[⏰] Waiting {delay:.1f}s until {wait_until.strftime(fmt)} for {currency} (level {martingale_level})")
+            time.sleep(delay)
+
+        # Try to confirm asset readiness until 20 seconds before entry time
+        ready = None
+        while datetime.now(entry_dt.tzinfo) < entry_dt - timedelta(seconds=20):
+            try:
+                ready = self.selenium.confirm_asset_ready(currency, entry_dt, timeframe)
+                if ready.get("ready"):
+                    break
+            except Exception as e:
+                logger.warning(f"[⚠️] Selenium confirm_asset_ready failed: {e}")
+            time.sleep(0.5)  # retry every 0.5s
+
+        # If still not ready, log as missed
+        if not ready or not ready.get("ready"):
+            logger.warning(f"[❌] Signal missed: Asset {currency} was not ready before entry time {entry_dt.strftime('%H:%M:%S')}")
+            return
+
         # Martingale check
         if martingale_level > 0:
-            time.sleep(0.5)
             with self.pending_lock:
                 for t in self.pending_trades:
                     if t['currency_pair'] == currency and t['level'] == 0 and t['resolved'] and t['result'] == 'WIN':
                         logger.info(f"[⏹️] Base trade WIN — skipping martingale level {martingale_level}.")
                         return
 
-        # Selenium handles asset & timeframe
-        ready = False
-        try:
-            ready = self.selenium.confirm_asset_ready(currency, entry_dt)
-        except Exception as e:
-            logger.warning(f"[⚠️] Selenium confirm_asset_ready failed: {e}")
-
-        if not ready:
-            logger.warning(f"[⚠️] Asset {currency} not ready. Skipping trade.")
-            return
-
         # Prepare pending trade entry
         trade_id = f"{currency}_{entry_dt.strftime('%H%M')}_{martingale_level}_{int(time.time()*1000)}"
-        logger.info(f"[🎯] READY to place trade {trade_id} — {direction} level {martingale_level}")
-
         with self.pending_lock:
             pending = {
                 'id': trade_id,
@@ -277,3 +279,4 @@ class TradeManager:
 # Global instance
 # -----------------
 trade_manager = TradeManager()
+                    
