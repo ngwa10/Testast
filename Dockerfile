@@ -20,6 +20,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     unzip \
     && rm -rf /var/lib/apt/lists/*
 
+
+RUN apt-get update && apt-get install -y --no-install-recommends libdbusmenu-glib4 libdbusmenu-gtk3-4 libdrm-amdgpu1 libdrm-intel1 libdrm-nouveau2 libdrm-radeon1 libedit2 libelf1 libexo-2-0 libexo-common libfile-readbackwards-perl libfontenc1 libgarcon-1-0 libgarcon-common libgarcon-gtk3-1-0 libgl1 libgl1-mesa-dri libglapi-mesa libglvnd0
+
+
+
 # Install ChromeDriver (auto-match installed Chrome version)
 RUN CHROME_VERSION=$(google-chrome --version | sed 's/[^0-9.]//g' | cut -d. -f1) \
     && LATEST_URL=$(curl -s "https://googlechromelabs.github.io/chrome-for-testing/LATEST_RELEASE_${CHROME_VERSION}") \
