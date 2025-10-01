@@ -18,6 +18,7 @@ def timezone_convert(entry_time_str, source_tz_str):
     """
     Converts a time string (HH:MM) from the sender timezone to Jakarta timezone (UTC+7).
     Validates the input format and ensures hours 0-23, minutes 0-59.
+    Works with standard IANA timezone names or simple UTC offsets like 'UTC-3', 'UTC+2'.
     """
     fmt = "%H:%M"
     try:
@@ -28,23 +29,31 @@ def timezone_convert(entry_time_str, source_tz_str):
         if not (0 <= entry_dt.hour <= 23 and 0 <= entry_dt.minute <= 59):
             raise ValueError(f"Invalid time: {entry_time_str}")
 
-        # Determine source offset
+        # Determine source timezone
         tz_lower = source_tz_str.lower()
         if tz_lower == "utc-4":
-            src_offset = -4
+            src_tz = pytz.FixedOffset(-4 * 60)
+        elif tz_lower == "utc-3":
+            src_tz = pytz.FixedOffset(-3 * 60)
         elif tz_lower == "cameroon":
-            src_offset = 1  # UTC+1
+            src_tz = pytz.timezone("Africa/Douala")  # UTC+1
         else:
-            src_offset = -3  # default UTC-3
+            # Attempt to treat as IANA timezone
+            try:
+                src_tz = pytz.timezone(source_tz_str)
+            except Exception:
+                src_tz = pytz.UTC  # fallback UTC
 
-        # Assign fixed offset timezone
-        entry_dt = entry_dt.replace(tzinfo=pytz.FixedOffset(src_offset * 60))
+        # Assign a date (today) and localize
+        today = datetime.now(pytz.utc).date()
+        entry_dt = entry_dt.replace(year=today.year, month=today.month, day=today.day)
+        entry_dt = src_tz.localize(entry_dt) if not entry_dt.tzinfo else entry_dt
 
-        # Convert to Jakarta time
+        # Convert to Jakarta
         jakarta_tz = pytz.timezone("Asia/Jakarta")
-        entry_dt_jakarta = entry_dt.astimezone(jakarta_tz)
+        entry_jkt = entry_dt.astimezone(jakarta_tz)
 
-        return entry_dt_jakarta.strftime(fmt)
+        return entry_jkt.strftime(fmt)
 
     except Exception as e:
         logger.warning(f"[⚠️] Failed timezone conversion for '{entry_time_str}' ({source_tz_str}): {e}")
@@ -58,4 +67,4 @@ def get_random_log_message(log_messages):
         return ""
     msg = random.choice(log_messages)
     return f"[🤖] {msg}"
-    
+        
