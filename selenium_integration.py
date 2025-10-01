@@ -39,6 +39,7 @@ PASSWORD = os.getenv("PASSWORD")
 if not EMAIL or not PASSWORD:
     raise ValueError("[❌] EMAIL or PASSWORD not found in .env file. Please set them before running.")
 
+
 class PocketOptionSelenium:
     def __init__(self, trade_manager, headless=False):
         self.trade_manager = trade_manager
@@ -70,6 +71,7 @@ class PocketOptionSelenium:
         service = Service("/usr/local/bin/chromedriver")
         driver = webdriver.Chrome(service=service, options=chrome_options)
         driver.get("https://pocketoption.com/en/login/")
+
         logger = getattr(self.trade_manager, "logger", None)
         if logger:
             logger.info("[✅] Chrome started and navigated to Pocket Option login.")
@@ -77,36 +79,34 @@ class PocketOptionSelenium:
             print("[✅] Chrome started and navigated to Pocket Option login.")
 
         # -----------------------
-        # Auto-fill login credentials from .env
+        # Auto-fill login credentials using JS
         # -----------------------
-        # -----------------------
-# Auto-fill login credentials from .env (improved & JS-safe)
-# -----------------------
-try:
-    wait = WebDriverWait(driver, 30)
-    email_field = wait.until(EC.presence_of_element_located((By.NAME, "email")))
-    password_field = wait.until(EC.presence_of_element_located((By.NAME, "password")))
+        try:
+            wait = WebDriverWait(driver, 30)
+            email_field = wait.until(EC.presence_of_element_located((By.NAME, "email")))
+            password_field = wait.until(EC.presence_of_element_located((By.NAME, "password")))
 
-    # Use JS injection to safely set the values
-    driver.execute_script("arguments[0].value = arguments[1];", email_field, EMAIL)
-    driver.execute_script("arguments[0].value = arguments[1];", password_field, PASSWORD)
-    print("[✅] Email and password set successfully via JS.")
+            # Use JS injection to safely set the values
+            driver.execute_script("arguments[0].value = arguments[1];", email_field, EMAIL)
+            driver.execute_script("arguments[0].value = arguments[1];", password_field, PASSWORD)
+            print("[✅] Email and password set successfully via JS.")
 
-    # Double-check what was entered (for debugging only - remove later)
-    typed_pw = driver.execute_script("return arguments[0].value;", password_field)
-    print("[🔍] Password length typed:", len(typed_pw))
+            # Double-check what was entered (debug)
+            typed_pw = driver.execute_script("return arguments[0].value;", password_field)
+            print("[🔍] Password length typed:", len(typed_pw))
 
-    # Click the login button if present
-    try:
-        login_button = driver.find_element(By.CSS_SELECTOR, "button[type='submit']")
-        driver.execute_script("arguments[0].click();", login_button)
-        print("[🔐] Login button clicked automatically.")
-    except Exception:
-        print("[ℹ️] Credentials filled, but login button not found. Please click manually.")
+            # Click login button if present
+            try:
+                login_button = driver.find_element(By.CSS_SELECTOR, "button[type='submit']")
+                driver.execute_script("arguments[0].click();", login_button)
+                print("[🔐] Login button clicked automatically.")
+            except Exception:
+                print("[ℹ️] Credentials filled, but login button not found. Please click manually.")
 
-except Exception as e:
-    print(f"[⚠️] Auto-login failed: {e}")
+        except Exception as e:
+            print(f"[⚠️] Auto-login failed: {e}")
 
+        return driver
 
     # -----------------
     # Detect current asset visible in UI
@@ -148,7 +148,7 @@ except Exception as e:
                     opt.click()
                     time.sleep(0.2)
                     break
-            pyautogui.click(random.randint(100,300), random.randint(100,300))
+            pyautogui.click(random.randint(100, 300), random.randint(100, 300))
             print(f"[🎯] Timeframe set to {timeframe}")
         except Exception as e:
             print(f"[❌] set_timeframe failed: {e}")
@@ -178,13 +178,17 @@ except Exception as e:
                 result = self.detect_trade_result()
                 if result:
                     with self.trade_manager.pending_lock:
-                        pending_currencies = set([t['currency_pair'] for t in self.trade_manager.pending_trades if not t['resolved'] and t.get('placed_at')])
+                        pending_currencies = set(
+                            [t['currency_pair'] for t in self.trade_manager.pending_trades
+                             if not t['resolved'] and t.get('placed_at')]
+                        )
                     for currency in pending_currencies:
                         try:
                             self.trade_manager.on_trade_result(currency, result)
                         except Exception:
                             pass
                 time.sleep(CHECK_INTERVAL)
+
         self.monitor_thread = threading.Thread(target=monitor, daemon=True)
         self.monitor_thread.start()
 
@@ -203,4 +207,6 @@ except Exception as e:
                         pass
                     return
                 time.sleep(0.5)
+
         threading.Thread(target=watch, daemon=True).start()
+        
