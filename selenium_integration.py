@@ -1,15 +1,15 @@
 """
-Final selenium_integration.py — PocketOptionSelenium.
+Final selenium_integration.py — PocketOptionSelenium (updated).
 
 - Uses a unique --user-data-dir per session (UUID) to avoid "already in use" errors.
+- Uses signal's original timezone for scheduling and entry checks (no Jakarta time).
 - Provides:
-    - confirm_asset_ready(currency_pair, entry_time_str)
-    - set_timeframe(timeframe)  -> selects M1 or M5 via dropdown
+    - confirm_asset_ready(currency_pair, entry_time_dt) -> datetime in signal's tz
+    - set_timeframe(timeframe)
     - detect_trade_result() -> scans trade history
     - start_result_monitor() -> background thread to detect results and callback to core
-    - watch_trade_for_result(currency_pair, placed_at) -> optional targeted watcher
+    - watch_trade_for_result(currency_pair, placed_at) -> targeted watcher
 - When a result is detected, calls: trade_manager.on_trade_result(currency_pair, result)
-  (In our core the method is named trade_manager.on_trade_result -> core implements on_trade_result as on_trade_result wrapper above.)
 """
 
 import time
@@ -32,7 +32,6 @@ class PocketOptionSelenium:
         self.headless = headless
         self.driver = self.setup_driver(headless)
         self.monitor_thread = None
-        # start generic results monitor
         self.start_result_monitor()
 
     def setup_driver(self, headless=False):
@@ -55,7 +54,7 @@ class PocketOptionSelenium:
         service = Service("/usr/local/bin/chromedriver")
         driver = webdriver.Chrome(service=service, options=chrome_options)
         driver.get("https://pocketoption.com/en/login/")
-        logger = getattr(self.trade_manager, "logger", None)  # ✅ use self.trade_manager
+        logger = getattr(self.trade_manager, "logger", None)
         if logger:
             logger.info("[✅] Chrome started and navigated to Pocket Option login.")
         else:
@@ -75,18 +74,15 @@ class PocketOptionSelenium:
 
     # -----------------
     # Confirm if asset ready and entry time not elapsed
+    # entry_time_dt: timezone-aware datetime in signal's tz
     # -----------------
-    def confirm_asset_ready(self, asset_name, entry_time_str, source_tz="UTC"):
-        # Check entry time not elapsed (naive check assuming entry_time_str is Jakarta-converted or HH:MM)
-        fmt = "%H:%M"
+    def confirm_asset_ready(self, asset_name, entry_time_dt):
         try:
-            entry_dt = datetime.strptime(entry_time_str, fmt)
-            now = datetime.now()
-            if now > entry_dt:
+            now = datetime.now(entry_time_dt.tzinfo)
+            if now > entry_time_dt:
                 return False
         except Exception:
             pass
-
         return self.detect_asset(asset_name)
 
     # -----------------
@@ -94,7 +90,6 @@ class PocketOptionSelenium:
     # -----------------
     def set_timeframe(self, timeframe="M1"):
         try:
-            # current element
             current_element = self.driver.find_element(By.CSS_SELECTOR, ".timeframe-selector .current")
             current_text = current_element.text.strip().upper()
             if current_text == timeframe.upper():
@@ -107,7 +102,6 @@ class PocketOptionSelenium:
                     opt.click()
                     time.sleep(0.2)
                     break
-            # click safe area to close dropdown
             pyautogui.click(random.randint(100,300), random.randint(100,300))
             print(f"[🎯] Timeframe set to {timeframe}")
         except Exception as e:
@@ -115,7 +109,6 @@ class PocketOptionSelenium:
 
     # -----------------
     # Parse trade-results in history DOM; returns 'WIN' or 'LOSS' or None
-    # Implementation depends on page structure; adapt selectors to real site.
     # -----------------
     def detect_trade_result(self):
         try:
@@ -131,20 +124,15 @@ class PocketOptionSelenium:
             return None
 
     # -----------------
-    # Generic background monitor: calls trade_manager.on_trade_result(currency, result)
-    # We're using a heuristic: when a result appears in history, we call back for all pending trades
-    # of the same currency (TradeManager will match the earliest pending). This keeps coupling loose.
+    # Generic background monitor: calls trade_manager.on_trade_result
     # -----------------
     def start_result_monitor(self):
         def monitor():
             while True:
                 result = self.detect_trade_result()
                 if result:
-                    # We don't know which currency from DOM easily; trade_manager will map by earliest pending trade
-                    # So we call trade_manager.on_trade_result for each unique pending currency we have
                     with self.trade_manager.pending_lock:
                         pending_currencies = set([t['currency_pair'] for t in self.trade_manager.pending_trades if not t['resolved'] and t.get('placed_at')])
-                    # If there are pending currencies, report to trade_manager for each (tm will match earliest)
                     for currency in pending_currencies:
                         try:
                             self.trade_manager.on_trade_result(currency, result)
@@ -155,14 +143,12 @@ class PocketOptionSelenium:
         self.monitor_thread.start()
 
     # -----------------
-    # Optional targeted watch: attempt to observe results after a specific placed_at timestamp.
-    # This is a best-effort helper; actual mapping is primarily handled by the above monitor.
+    # Optional targeted watch: observe results after a specific placed_at timestamp
     # -----------------
     def watch_trade_for_result(self, currency_pair, placed_at):
         def watch():
-            # Wait up to some reasonable window for a result (e.g., 60 seconds)
-            deadline = datetime.now() + timedelta(seconds=60)
-            while datetime.now() < deadline:
+            deadline = datetime.now(placed_at.tzinfo) + timedelta(seconds=60)
+            while datetime.now(placed_at.tzinfo) < deadline:
                 res = self.detect_trade_result()
                 if res:
                     try:
@@ -172,4 +158,3 @@ class PocketOptionSelenium:
                     return
                 time.sleep(0.5)
         threading.Thread(target=watch, daemon=True).start()
-        
