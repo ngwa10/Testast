@@ -34,10 +34,16 @@ try:
     from core_utils import timezone_convert as convert_signal_time
 except Exception:
     # fallback simple converter returning timezone-aware datetime in signal's tz
-    def convert_signal_time(entry_time_str, source_tz_str):
+    def convert_signal_time(entry_time_val, source_tz_str):
+        # -------------------------
+        # FIX: handle datetime input directly
+        # -------------------------
+        if isinstance(entry_time_val, datetime):
+            return entry_time_val
+
         fmt = "%H:%M"
         try:
-            entry_dt_naive = datetime.strptime(entry_time_str, fmt)
+            entry_dt_naive = datetime.strptime(entry_time_val, fmt)
             tz_lower = source_tz_str.lower().strip()
             if tz_lower == "cameroon":
                 src = pytz.timezone("Africa/Douala")
@@ -306,4 +312,3 @@ class TradeManager:
 # Global instance
 # -----------------
 trade_manager = TradeManager()
-            
