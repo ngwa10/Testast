@@ -32,20 +32,6 @@ cd /opt/noVNC
 sleep 5
 
 # =========================
-# Run Selenium auto-login
-# =========================
-echo "[🧪] Running Selenium auto-login test..."
-python3 /home/dockuser/test_selenium.py
-SELENIUM_EXIT=$?
-
-if [ $SELENIUM_EXIT -ne 0 ]; then
-  echo "[❌] Selenium auto-login failed! Stopping container..."
-  exit 1
-else
-  echo "[✅] Selenium auto-login passed! Continuing startup..."
-fi
-
-# =========================
 # Start core.py (trade execution logic)
 # =========================
 echo "Starting trading core..."
