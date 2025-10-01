@@ -3,29 +3,28 @@ FROM ubuntu:22.04
 ENV DEBIAN_FRONTEND=noninteractive \
     DISPLAY=:1 \
     VNC_RESOLUTION=1280x800 \
-    NO_VNC_HOME=/opt/noVNC \
-    PYTHONUNBUFFERED=1
+    NO_VNC_HOME=/opt/noVNC
 
 # -------------------------
-# Minimal packages + Python
+# Install minimal packages
 # -------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl wget ca-certificates gnupg2 unzip \
-    python3 python3-pip python3-dev python3-tk \
-    git dos2unix scrot xclip xsel \
-    procps dbus-x11 \
+    curl wget ca-certificates gnupg2 \
+    python3 python3-pip git \
     && rm -rf /var/lib/apt/lists/*
 
 # -------------------------
-# Install Chrome
+# Install Google Chrome
 # -------------------------
 RUN curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg \
     && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list
 
-RUN apt-get update && apt-get install -y --no-install-recommends google-chrome-stable && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    google-chrome-stable unzip \
+    && rm -rf /var/lib/apt/lists/*
 
 # -------------------------
-# Install ChromeDriver
+# Install ChromeDriver (auto-match)
 # -------------------------
 RUN CHROME_VERSION=$(google-chrome --version | sed 's/[^0-9.]//g' | cut -d. -f1) \
     && LATEST_URL=$(curl -s "https://googlechromelabs.github.io/chrome-for-testing/LATEST_RELEASE_${CHROME_VERSION}") \
@@ -36,11 +35,14 @@ RUN CHROME_VERSION=$(google-chrome --version | sed 's/[^0-9.]//g' | cut -d. -f1)
     && rm -rf /tmp/chromedriver.zip /usr/local/bin/chromedriver-linux64
 
 # -------------------------
-# Install VNC + XFCE
+# Install VNC, XFCE desktop
 # -------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tigervnc-standalone-server \
+    tigervnc-tools \
     xfce4-session xfce4-panel xfce4-terminal \
+    dbus-x11 procps dos2unix \
+    python3-tk python3-dev scrot xclip xsel \
     && rm -rf /var/lib/apt/lists/*
 
 # -------------------------
@@ -58,28 +60,34 @@ RUN useradd -m -s /bin/bash -u 1000 dockuser \
     && chown -R dockuser:dockuser /home/dockuser
 
 # -------------------------
-# Python dependencies
+# Install Python packages
 # -------------------------
-RUN pip3 install --no-cache-dir \
-    pytz selenium telethon numpy python-dotenv pyautogui pillow
+RUN pip3 install --no-cache-dir pytz selenium telethon numpy python-dotenv pyautogui pillow
 
 # -------------------------
-# Copy project files
+# Copy scripts & files
 # -------------------------
 COPY start.sh /usr/local/bin/start.sh
+RUN dos2unix /usr/local/bin/start.sh && chmod +x /usr/local/bin/start.sh
+
 COPY .env /home/dockuser/.env
 COPY core.py /home/dockuser/core.py
-COPY selenium_integration.py /home/dockuser/selenium_integration.py
 COPY core_utils.py /home/dockuser/core_utils.py
+COPY logs.json /home/dockuser/logs.json
 COPY telegram_listener.py /home/dockuser/telegram_listener.py
 COPY telegram_callbacks.py /home/dockuser/telegram_callbacks.py
-COPY logs.json /home/dockuser/logs.json
+COPY selenium_integration.py /home/dockuser/selenium_integration.py
 
-RUN dos2unix /usr/local/bin/start.sh && chmod +x /usr/local/bin/start.sh \
-    && chown -R dockuser:dockuser /home/dockuser
+RUN chown -R dockuser:dockuser /home/dockuser
 
+# -------------------------
+# Ports
+# -------------------------
 EXPOSE 5901 6080
 
+# -------------------------
+# User & workdir
+# -------------------------
 USER dockuser
 WORKDIR /home/dockuser
 
