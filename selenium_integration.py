@@ -79,34 +79,34 @@ class PocketOptionSelenium:
         # -----------------------
         # Auto-fill login credentials from .env
         # -----------------------
-        try:
-            wait = WebDriverWait(driver, 30)
-            email_field = wait.until(EC.presence_of_element_located((By.NAME, "email")))
-            password_field = wait.until(EC.presence_of_element_located((By.NAME, "password")))
+        # -----------------------
+# Auto-fill login credentials from .env (improved & JS-safe)
+# -----------------------
+try:
+    wait = WebDriverWait(driver, 30)
+    email_field = wait.until(EC.presence_of_element_located((By.NAME, "email")))
+    password_field = wait.until(EC.presence_of_element_located((By.NAME, "password")))
 
-            # Clear and input credentials safely
-            email_field.clear()
-            email_field.send_keys(EMAIL)
+    # Use JS injection to safely set the values
+    driver.execute_script("arguments[0].value = arguments[1];", email_field, EMAIL)
+    driver.execute_script("arguments[0].value = arguments[1];", password_field, PASSWORD)
+    print("[✅] Email and password set successfully via JS.")
 
-            password_field.clear()
-            # Use pyautogui as fallback if send_keys fails
-            try:
-                password_field.send_keys(PASSWORD)
-            except Exception:
-                password_field.click()
-                pyautogui.typewrite(PASSWORD, interval=0.05)
+    # Double-check what was entered (for debugging only - remove later)
+    typed_pw = driver.execute_script("return arguments[0].value;", password_field)
+    print("[🔍] Password length typed:", len(typed_pw))
 
-            # Optional: Click login button automatically
-            try:
-                login_button = driver.find_element(By.CSS_SELECTOR, "button[type='submit']")
-                login_button.click()
-                print("[🔐] Credentials entered and login button clicked automatically.")
-            except Exception:
-                print("[ℹ️] Credentials filled, but login button not found. Please click manually.")
-        except Exception as e:
-            print(f"[⚠️] Auto-login failed: {e}")
+    # Click the login button if present
+    try:
+        login_button = driver.find_element(By.CSS_SELECTOR, "button[type='submit']")
+        driver.execute_script("arguments[0].click();", login_button)
+        print("[🔐] Login button clicked automatically.")
+    except Exception:
+        print("[ℹ️] Credentials filled, but login button not found. Please click manually.")
 
-        return driver
+except Exception as e:
+    print(f"[⚠️] Auto-login failed: {e}")
+
 
     # -----------------
     # Detect current asset visible in UI
