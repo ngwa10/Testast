@@ -1,18 +1,3 @@
-"""
-selenium_integration.py — PocketOptionSelenium (updated)
-
-Features:
-- Persistent Chrome session with unique --user-data-dir
-- Auto-login (email & password)
-- Asset selection via dropdown (CADUSD format, handles OTC)
-- Timeframe selection
-- Randomized humanized delays & random clicks to clear dropdowns
-- Trade result monitoring (WIN / LOSS)
-- Optional targeted watcher
-- Balance fetching (real & demo)
-- Structured asset/timeframe readiness response
-"""
-
 import time
 import threading
 import random
@@ -145,10 +130,8 @@ class PocketOptionSelenium:
     # -----------------
     def select_asset(self, currency_pair):
         try:
-            wait = WebDriverWait(self.driver, 10)
             current_asset_el = self.driver.find_element(By.CSS_SELECTOR, ".asset-name-selector")
             if current_asset_el.text.strip() == currency_pair:
-                print(f"[🎯] Asset already selected: {currency_pair}")
                 return True
 
             current_asset_el.click()
@@ -170,13 +153,7 @@ class PocketOptionSelenium:
 
             pyautogui.click(random.randint(400, 800), random.randint(200, 400))
             time.sleep(random.uniform(0.5, 1.5))
-
-            if selected:
-                print(f"[🎯] Asset selected: {currency_pair}")
-                return True
-            else:
-                print(f"[❌] Asset {currency_pair} not found.")
-                return False
+            return selected
 
         except Exception as e:
             print(f"[❌] select_asset failed: {e}")
@@ -189,7 +166,6 @@ class PocketOptionSelenium:
         try:
             current_element = self.driver.find_element(By.CSS_SELECTOR, ".timeframe-selector .current")
             if current_element.text.strip().upper() == timeframe.upper():
-                print(f"[🎯] Timeframe already set: {timeframe}")
                 return True
 
             current_element.click()
@@ -205,20 +181,14 @@ class PocketOptionSelenium:
 
             pyautogui.click(random.randint(400, 800), random.randint(200, 400))
             time.sleep(random.uniform(0.5, 1.5))
-
-            if selected:
-                print(f"[🎯] Timeframe set: {timeframe}")
-                return True
-            else:
-                print(f"[❌] Timeframe {timeframe} not found.")
-                return False
+            return selected
 
         except Exception as e:
             print(f"[❌] set_timeframe failed: {e}")
             return False
 
     # -----------------
-    # Detect trade results
+    # Detect trade results (instant push)
     # -----------------
     def detect_trade_result(self):
         try:
@@ -226,12 +196,32 @@ class PocketOptionSelenium:
             for e in elems:
                 txt = e.text.strip()
                 if txt.startswith("+"):
+                    self.push_result("WIN")
                     return "WIN"
                 if txt == "$0":
+                    self.push_result("LOSS")
                     return "LOSS"
             return None
         except:
             return None
+
+    # -----------------
+    # Push result instantly
+    # -----------------
+    def push_result(self, result):
+        try:
+            with self.trade_manager.pending_lock:
+                pending_currencies = set(
+                    [t['currency_pair'] for t in self.trade_manager.pending_trades
+                     if not t['resolved'] and t.get('placed_at')]
+                )
+            for currency in pending_currencies:
+                try:
+                    self.trade_manager.on_trade_result(currency, result)
+                except:
+                    pass
+        except:
+            pass
 
     # -----------------
     # Background monitor
@@ -239,21 +229,7 @@ class PocketOptionSelenium:
     def start_result_monitor(self):
         def monitor():
             while True:
-                result = self.detect_trade_result()
-                if result:
-                    try:
-                        with self.trade_manager.pending_lock:
-                            pending_currencies = set(
-                                [t['currency_pair'] for t in self.trade_manager.pending_trades
-                                 if not t['resolved'] and t.get('placed_at')]
-                            )
-                    except:
-                        pending_currencies = set()
-                    for currency in pending_currencies:
-                        try:
-                            self.trade_manager.on_trade_result(currency, result)
-                        except:
-                            pass
+                self.detect_trade_result()
                 time.sleep(CHECK_INTERVAL)
         self.monitor_thread = threading.Thread(target=monitor, daemon=True)
         self.monitor_thread.start()
@@ -267,33 +243,27 @@ class PocketOptionSelenium:
             while datetime.now(placed_at.tzinfo) < deadline:
                 res = self.detect_trade_result()
                 if res:
-                    try:
-                        self.trade_manager.on_trade_result(currency_pair, res)
-                    except:
-                        pass
                     return
                 time.sleep(0.5)
         threading.Thread(target=watch, daemon=True).start()
 
     # -----------------
-    # Confirm asset ready (structured response)
+    # Confirm asset ready with retry (until 20s before entry)
     # -----------------
     def confirm_asset_ready(self, asset_name, entry_time_dt, timeframe="M1"):
         """
         Ensure asset and timeframe are selected and ready.
-        Returns a dict:
-            {"ready": True/False, "asset": asset_name, "timeframe": timeframe}
+        Returns a dict: {"ready": True/False, "asset": asset_name, "timeframe": timeframe}
         """
-        try:
-            now = datetime.now(entry_time_dt.tzinfo)
-            if now > entry_time_dt:
-                print(f"[❌] Entry time passed for {asset_name}")
-                return {"ready": False, "asset": asset_name, "timeframe": timeframe}
-        except:
-            pass
-
-        asset_ready = self.select_asset(asset_name)
-        timeframe_ready = self.set_timeframe(timeframe)
-        ready = asset_ready and timeframe_ready
-
-        return {"ready": ready, "asset": asset_name, "timeframe": timeframe}
+        while datetime.now(entry_time_dt.tzinfo) < entry_time_dt - timedelta(seconds=20):
+            try:
+                asset_ready = self.select_asset(asset_name)
+                timeframe_ready = self.set_timeframe(timeframe)
+                if asset_ready and timeframe_ready:
+                    return {"ready": True, "asset": asset_name, "timeframe": timeframe}
+            except Exception as e:
+                print(f"[⚠️] confirm_asset_ready retry failed: {e}")
+            time.sleep(0.5)
+        print(f"[❌] Asset {asset_name} not ready before entry {entry_time_dt.strftime('%H:%M:%S')}")
+        return {"ready": False, "asset": asset_name, "timeframe": timeframe}
+        
