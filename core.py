@@ -105,7 +105,7 @@ def random_log():
 # TradeManager
 # -------------------------
 class TradeManager:
-    def __init__(self, base_amount=1.0, max_martingale=2):
+    def __init__(self, base_amount=1.0, max_martingale=3):
         self.base_amount = base_amount
         self.max_martingale = max_martingale
         self.trading_active = True
