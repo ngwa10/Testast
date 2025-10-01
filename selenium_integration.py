@@ -49,15 +49,14 @@ class PocketOptionSelenium:
         session_id = str(uuid.uuid4())
         chrome_options.add_argument(f"--user-data-dir=/tmp/chrome-user-data-{session_id}")
 
-        if headless:
-            chrome_options.add_argument("--headless=new")
+        def setup_driver(self, headless=False):
+    
+    driver = webdriver.Chrome(service=service, options=chrome_options)
+    driver.get("https://pocketoption.com/en/login/")
+    logger = getattr(self.trade_manager, "logger", None)  # ✅ use self.trade_manager
+    print("[✅] Chrome started and navigated to Pocket Option login.")
+    return driver
 
-        service = Service("/usr/local/bin/chromedriver")
-        driver = webdriver.Chrome(service=service, options=chrome_options)
-        driver.get("https://pocketoption.com/en/login/")
-        logger = getattr(trade_manager, "logger", None)
-        print("[✅] Chrome started and navigated to Pocket Option login.")
-        return driver
 
     # -----------------
     # Detect current asset visible in UI
