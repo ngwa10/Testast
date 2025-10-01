@@ -134,10 +134,30 @@ class TradeManager:
         # Convert times from sender tz to Jakarta
         source_tz = signal.get("source", "UTC-3")
         try:
-            signal['entry_time'] = convert_signal_time(signal['entry_time'], source_tz)
-            signal['martingale_times'] = [convert_signal_time(t, source_tz) for t in signal.get('martingale_times', [])]
+            # Convert main entry_time
+            entry_time_converted = convert_signal_time(signal['entry_time'], source_tz)
+            # Validate converted time
+            try:
+                datetime.strptime(entry_time_converted, "%H:%M")
+                signal['entry_time'] = entry_time_converted
+            except Exception:
+                logger.warning(f"[⚠️] Invalid entry_time after conversion: '{entry_time_converted}'. Skipping signal.")
+                return
+
+            # Convert and validate martingale times
+            valid_martingale_times = []
+            for t in signal.get('martingale_times', []):
+                t_conv = convert_signal_time(t, source_tz)
+                try:
+                    datetime.strptime(t_conv, "%H:%M")
+                    valid_martingale_times.append(t_conv)
+                except Exception:
+                    logger.warning(f"[⚠️] Invalid martingale time after conversion: '{t_conv}'. Skipping this level.")
+            signal['martingale_times'] = valid_martingale_times
+
         except Exception as e:
             logger.warning(f"[⚠️] Time conversion error: {e}")
+            return  # skip signal if conversion fails
 
         # Schedule trades: direct + martingale entries (these run in background)
         entry_time = signal.get('entry_time')
@@ -256,25 +276,18 @@ class TradeManager:
         try:
             self.selenium.watch_trade_for_result(currency, pending['placed_at'])
         except Exception:
-            # Even if this watch fails, core will still continue - result monitoring runs globally too.
             pass
 
-        # Log and exit (the result handling happens in on_trade_result)
+        # Log and exit
         logger.info(f"[📝] Trade placed and registered: {trade_id} — awaiting result. {random_log()}")
 
     # -----------------
     # Called by Selenium when it detects WIN/LOSS.
-    # Selenium will pass currency_pair and the detected result.
     # -----------------
     def on_trade_result(self, currency_pair: str, result: str):
-        """
-        Called from Selenium monitor thread when a WIN or LOSS is detected.
-        We map that to the earliest unresolved pending trade for that currency and apply logic.
-        """
         logger.info(f"[📣] Result callback from Selenium: {currency_pair} -> {result}")
 
         with self.pending_lock:
-            # find earliest unresolved pending trade for this currency
             pending = None
             for t in sorted(self.pending_trades, key=lambda x: x['placed_at'] or datetime.max):
                 if t['currency_pair'] == currency_pair and not t['resolved'] and t['placed_at'] is not None:
@@ -285,45 +298,31 @@ class TradeManager:
                 logger.info(f"[ℹ️] No pending trade matched for {currency_pair}; ignoring result.")
                 return
 
-            # mark resolved
             pending['resolved'] = True
             pending['result'] = result
 
-        # If WIN -> reset increases for this currency and prevent further martingale
         if result == 'WIN':
             logger.info(f"[✅] Trade WIN detected for {currency_pair}. Resetting increases and stopping martingale.")
-            # reset global increase counts for this currency by decrementing accordingly
             with self.pending_lock:
                 incs = self.increase_counts.get(currency_pair, 0)
                 if incs > 0:
-                    # send Shift+A incs times to decrease amount back to base
                     for _ in range(incs):
                         pyautogui.keyDown('shift'); pyautogui.press('a'); pyautogui.keyUp('shift')
                         logger.info(f"[↩️] Decreased trade amount for {currency_pair} (reset).")
-                        time.sleep(0.05)  # small gap
+                        time.sleep(0.05)
                     self.increase_counts[currency_pair] = 0
 
-            # stop martingale behavior for any pending entries of this currency
-            # mark any unresolved pending trades for same currency as 'skipped' (so we won't place)
-            with self.pending_lock:
                 for t in self.pending_trades:
                     if t['currency_pair'] == currency_pair and not t['resolved']:
                         t['resolved'] = True
                         t['result'] = 'SKIPPED_AFTER_WIN'
             return
 
-        # If LOSS -> see if we reached max martingale (for the base trade)
         if result == 'LOSS':
             logger.info(f"[❌] Trade LOSS detected for {currency_pair}.")
-            # find base trade (level 0) that matches and check how many levels already tried
             with self.pending_lock:
-                base_levels = [t for t in self.pending_trades if t['currency_pair'] == currency_pair and t['level'] == 0]
-                # determine how many martingale levels already placed for this base signal
-                # count resolved levels where level > 0 and placed recently
-                # simple approach: count increases we executed
                 increases_done = self.increase_counts.get(currency_pair, 0)
 
-            # If increases_done >= max_martingale -> reset and mark stop
             if increases_done >= self.max_martingale:
                 logger.info(f"[⚠️] Reached max martingale for {currency_pair}. Resetting amounts and stopping further martingales.")
                 with self.pending_lock:
@@ -335,19 +334,16 @@ class TradeManager:
                             time.sleep(0.05)
                         self.increase_counts[currency_pair] = 0
 
-                # mark pending unresolved trades for this currency as resolved to avoid further placing
-                with self.pending_lock:
                     for t in self.pending_trades:
                         if t['currency_pair'] == currency_pair and not t['resolved']:
                             t['resolved'] = True
                             t['result'] = 'ABORTED_MAX_MARTINGALE'
                 return
 
-            # else: do nothing here — the next martingale execute_trade thread (scheduled from signal) will run at its scheduled time and place the next trade (increase + buy/sell)
             logger.info(f"[ℹ️] Martingale available for {currency_pair}. Next martingale entry (if scheduled) will attempt to place trade.")
 
     # -----------------
-    # Utility: cleanup old resolved pending trades to prevent memory growth
+    # Utility: cleanup old resolved pending trades
     # -----------------
     def _cleanup_pending(self):
         with self.pending_lock:
@@ -356,4 +352,4 @@ class TradeManager:
 
 # single global instance
 trade_manager = TradeManager()
-        
+            
