@@ -2,6 +2,12 @@
 set -e
 
 # -------------------------
+# Environment
+# -------------------------
+export DISPLAY=:1
+export NO_VNC_HOME=/opt/noVNC
+
+# -------------------------
 # Start VNC server (passwordless)
 # -------------------------
 vncserver :1 -geometry ${VNC_RESOLUTION} -depth 24 -SecurityTypes None
@@ -14,9 +20,9 @@ ${NO_VNC_HOME}/utils/novnc_proxy --vnc localhost:5901 --listen 6080 &
 echo "[✅] noVNC started on port 6080"
 
 # -------------------------
-# Wait a few seconds for display
+# Give VNC a moment to start
 # -------------------------
-sleep 3
+sleep 5
 
 # -------------------------
 # Start Python bot
