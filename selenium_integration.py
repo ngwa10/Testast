@@ -27,17 +27,25 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import pyautogui
-from dotenv import load_dotenv  # ✅ NEW
+# Note: dotenv import kept in case you want to re-enable environment loading later.
+from dotenv import load_dotenv  # ✅ kept for convenience
 
 CHECK_INTERVAL = 0.5  # seconds
 
-# Load credentials from .env
-load_dotenv()
-EMAIL = os.getenv("EMAIL")
-PASSWORD = os.getenv("PASSWORD")
+# ---------------------------
+# HARDCODED CREDENTIALS (for testing only)
+# ---------------------------
+# WARNING: Hardcoding credentials is insecure. Remove before production use.
+EMAIL = "mylivemyfuture@123gmail.com"
+PASSWORD = "AaCcWw3468,"
+
+# If you prefer to use .env again, comment the two lines above and uncomment below:
+# load_dotenv()
+# EMAIL = os.getenv("EMAIL")
+# PASSWORD = os.getenv("PASSWORD")
 
 if not EMAIL or not PASSWORD:
-    raise ValueError("[❌] EMAIL or PASSWORD not found in .env file. Please set them before running.")
+    raise ValueError("[❌] EMAIL or PASSWORD not set. Please set them before running.")
 
 
 class PocketOptionSelenium:
@@ -66,8 +74,10 @@ class PocketOptionSelenium:
         chrome_options.add_experimental_option("detach", True)
 
         if headless:
+            # Note: headless with interactive actions might fail; use with caution.
             chrome_options.add_argument("--headless=new")
 
+        # Adjust path to chromedriver if needed
         service = Service("/usr/local/bin/chromedriver")
         driver = webdriver.Chrome(service=service, options=chrome_options)
         driver.get("https://pocketoption.com/en/login/")
@@ -92,16 +102,37 @@ class PocketOptionSelenium:
             print("[✅] Email and password set successfully via JS.")
 
             # Double-check what was entered (debug)
-            typed_pw = driver.execute_script("return arguments[0].value;", password_field)
-            print("[🔍] Password length typed:", len(typed_pw))
+            try:
+                typed_pw = driver.execute_script("return arguments[0].value;", password_field)
+                print("[🔍] Password length typed:", len(typed_pw))
+            except Exception:
+                # If the field doesn't expose value due to custom widgets, ignore
+                print("[🔍] Could not read back password value (field may be custom).")
 
             # Click login button if present
             try:
-                login_button = driver.find_element(By.CSS_SELECTOR, "button[type='submit']")
-                driver.execute_script("arguments[0].click();", login_button)
-                print("[🔐] Login button clicked automatically.")
+                # sometimes the login button is inside a form or has a different selector; try common fallbacks
+                login_button = None
+                try:
+                    login_button = driver.find_element(By.CSS_SELECTOR, "button[type='submit']")
+                except Exception:
+                    # Fallback: find button by text (may require localization)
+                    btns = driver.find_elements(By.TAG_NAME, "button")
+                    for b in btns:
+                        try:
+                            if "log" in b.text.lower() or "sign" in b.text.lower():
+                                login_button = b
+                                break
+                        except Exception:
+                            continue
+
+                if login_button:
+                    driver.execute_script("arguments[0].click();", login_button)
+                    print("[🔐] Login button clicked automatically.")
+                else:
+                    print("[ℹ️] Credentials filled, but login button not found. Please click manually.")
             except Exception:
-                print("[ℹ️] Credentials filled, but login button not found. Please click manually.")
+                print("[ℹ️] Failed to click login button via JS. Please click manually.")
 
         except Exception as e:
             print(f"[⚠️] Auto-login failed: {e}")
@@ -148,7 +179,12 @@ class PocketOptionSelenium:
                     opt.click()
                     time.sleep(0.2)
                     break
-            pyautogui.click(random.randint(100, 300), random.randint(100, 300))
+            # small randomized click to move focus away (mimic human behavior)
+            try:
+                pyautogui.click(random.randint(100, 300), random.randint(100, 300))
+            except Exception:
+                # pyautogui may not be available/usable in some containers - ignore if it fails
+                pass
             print(f"[🎯] Timeframe set to {timeframe}")
         except Exception as e:
             print(f"[❌] set_timeframe failed: {e}")
@@ -177,11 +213,14 @@ class PocketOptionSelenium:
             while True:
                 result = self.detect_trade_result()
                 if result:
-                    with self.trade_manager.pending_lock:
-                        pending_currencies = set(
-                            [t['currency_pair'] for t in self.trade_manager.pending_trades
-                             if not t['resolved'] and t.get('placed_at')]
-                        )
+                    try:
+                        with self.trade_manager.pending_lock:
+                            pending_currencies = set(
+                                [t['currency_pair'] for t in self.trade_manager.pending_trades
+                                 if not t['resolved'] and t.get('placed_at')]
+                            )
+                    except Exception:
+                        pending_currencies = set()
                     for currency in pending_currencies:
                         try:
                             self.trade_manager.on_trade_result(currency, result)
@@ -209,4 +248,3 @@ class PocketOptionSelenium:
                 time.sleep(0.5)
 
         threading.Thread(target=watch, daemon=True).start()
-        
