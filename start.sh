@@ -1,9 +1,16 @@
 #!/bin/bash
 set -e
 
-# =========================
+# -------------------------
+# Setup display for headless GUI
+# -------------------------
+echo "[🖥️] Starting Xvfb for headless GUI..."
+export DISPLAY=:1
+Xvfb :1 -screen 0 1280x800x24 &
+
+# -------------------------
 # Setup directories
-# =========================
+# -------------------------
 mkdir -p /home/dockuser/.vnc /home/dockuser/chrome-profile
 chmod 700 /home/dockuser/.vnc
 
@@ -15,38 +22,36 @@ exec startxfce4
 EOF
 chmod +x /home/dockuser/.vnc/xstartup
 
-# =========================
+# -------------------------
 # Start VNC server
-# =========================
-echo "🚀 Starting VNC server..."
-vncserver :1 -geometry 1280x800 -depth 24 -SecurityTypes None
+# -------------------------
+echo "[🖥️] Starting VNC server..."
+vncserver :1 -geometry 1280x800 -depth 24 -SecurityTypes None || echo "[❌] VNC failed"
 
-# =========================
+# -------------------------
 # Start noVNC
-# =========================
-echo "🌐 Starting noVNC..."
+# -------------------------
+echo "[🌐] Starting noVNC..."
 cd /opt/noVNC
 /opt/noVNC/utils/websockify/run 6080 localhost:5901 --web /opt/noVNC &
 
 # Give desktop some time to start
 sleep 5
 
-# =========================
-# Start Telegram listener (background OK)
-# =========================
-echo "📨 Starting Telegram listener..."
-python3 - << 'PYTHON_EOF' &
-import sys
-sys.path.insert(0, '/home/dockuser')
+# -------------------------
+# Start core.py
+# -------------------------
+echo "[🤖] Starting core.py..."
+python3 /home/dockuser/core.py 2>&1 | tee /home/dockuser/core.log &
 
-from telegram_listener import start_telegram_listener
-from telegram_callbacks import signal_callback, command_callback
+# -------------------------
+# Start Telegram listener
+# -------------------------
+echo "[💬] Starting Telegram listener..."
+python3 /home/dockuser/telegram_listener.py 2>&1 | tee /home/dockuser/telegram.log &
 
-start_telegram_listener(signal_callback, command_callback)
-PYTHON_EOF
-
-# =========================
-# Start core.py in foreground (IMPORTANT)
-# =========================
-echo "🤖 Starting trading core in foreground..."
-exec python3 -u /home/dockuser/core.py
+# -------------------------
+# Keep container alive
+# -------------------------
+echo "[✅] All services started. Container ready!"
+tail -f /dev/null
