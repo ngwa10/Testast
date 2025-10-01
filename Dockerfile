@@ -66,6 +66,12 @@ RUN dos2unix /usr/local/bin/start.sh && chmod +x /usr/local/bin/start.sh
 COPY test_selenium.py /home/dockuser/test_selenium.py
 RUN chown dockuser:dockuser /home/dockuser/test_selenium.py
 
+
+# ✅ Copy environment file
+COPY .env /home/dockuser/.env
+RUN chown dockuser:dockuser /home/dockuser/.env
+
+
 # Copy core logic
 COPY core.py /home/dockuser/core.py
 RUN chown dockuser:dockuser /home/dockuser/core.py
