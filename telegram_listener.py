@@ -15,7 +15,7 @@ import logging
 api_id = 29630724
 api_hash = "8e12421a95fd722246e0c0b194fd3e0c"
 bot_token = "8477806088:AAGEXpIAwN5tNQM0hsCGqP-otpLJjPJLmWA"
-TARGET_CHAT_ID = -1003033183667  # Your private channel numeric ID
+TARGET_CHAT_ID = -1003033183667  # Numeric channel ID
 
 # =========================
 # Logging Setup
@@ -57,9 +57,9 @@ def parse_signal(message_text):
     result = {
         "currency_pair": None,
         "direction": None,
-        "entry_time": None,          # Will hold UTC datetime
+        "entry_time": None,
         "timeframe": None,
-        "martingale_times": [],      # Will hold UTC datetimes
+        "martingale_times": [],
         "source": "OTC-3"
     }
 
@@ -70,33 +70,24 @@ def parse_signal(message_text):
         is_anna_signal = "anna signals" in message_text.lower()
         clean_text = re.sub(r'[^\x00-\x7F]+', ' ', message_text)
 
-        # ----------------
         # Currency Pair
-        # ----------------
         pair_match = re.search(r'([A-Z]{3}/[A-Z]{3})(?:[\s_\-]?OTC)?', clean_text, re.IGNORECASE)
-        if not pair_match:
-            pair_match = re.search(r'(?:Pair:|CURRENCY PAIR:|📊)\s*([\w\/\-]+)', clean_text)
         if pair_match:
             result['currency_pair'] = pair_match.group(0).strip()
 
-        # ----------------
         # Direction
-        # ----------------
         direction_match = re.search(r'(BUY|SELL|CALL|PUT|🔼|🟥|🟩|🔽|⏺ BUY|⏺ SELL)', message_text, re.IGNORECASE)
         if direction_match:
             direction = direction_match.group(1).upper()
-            if direction in ['CALL', 'BUY', '🟩', '🔼', '⏺ BUY']:
+            if direction in ['CALL','BUY','🟩','🔼','⏺ BUY']:
                 result['direction'] = 'BUY'
-            elif direction in ['PUT', 'SELL', '🔽', '🟥', '⏺ SELL']:
+            elif direction in ['PUT','SELL','🔽','🟥','⏺ SELL']:
                 result['direction'] = 'SELL'
 
-        # ----------------
         # Entry Time
-        # ----------------
         entry_time_match = re.search(r'(?:Entry Time:|Entry at|TIME \(UTC.*\):|⏺ Entry at)\s*(\d{2}:\d{2})', message_text)
         if entry_time_match:
             entry_time_str = entry_time_match.group(1)
-            # Detect source first
             source = "OTC-3"
             if "💥 GET THIS SIGNAL HERE!" in message_text:
                 source = "UTC-4"
@@ -111,11 +102,9 @@ def parse_signal(message_text):
                     return None
                 result['entry_time'] = entry_utc
             else:
-                result['entry_time'] = entry_time_str  # fallback
+                result['entry_time'] = entry_time_str
 
-        # ----------------
         # Timeframe
-        # ----------------
         timeframe_match = re.search(r'Expiration:?\s*(M1|M5|1 Minute|5 Minute|5M|1M|5-minute)', message_text, re.IGNORECASE)
         if timeframe_match:
             tf = timeframe_match.group(1).lower()
@@ -123,9 +112,7 @@ def parse_signal(message_text):
         if not result['timeframe']:
             result['timeframe'] = 'M1' if is_anna_signal else 'M5'
 
-        # ----------------
         # Martingale times
-        # ----------------
         martingale_matches = re.findall(
             r'(?:Level \d+|level(?: at)?|PROTECTION|level At|level|ª PROTECTION)\D*[:\-\—>]*\s*(\d{2}:\d{2})',
             message_text, re.IGNORECASE
@@ -176,7 +163,7 @@ def start_telegram_listener(signal_callback, command_callback):
             if signal:
                 received_time = datetime.utcnow().strftime("%H:%M:%S")
                 log_info(f"[⚡] Parsed signal at {received_time}: {signal}")
-                await signal_callback(signal)  # send to core
+                await signal_callback(signal)
             else:
                 log_info("[ℹ️] Message ignored (not a valid signal).")
 
@@ -190,4 +177,4 @@ def start_telegram_listener(signal_callback, command_callback):
         client.run_until_disconnected()
     except Exception as e:
         log_error(f"[❌] Telegram listener failed: {e}")
-    
+        
