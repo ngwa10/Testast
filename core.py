@@ -5,6 +5,7 @@ import logging
 import json
 from datetime import datetime, timedelta
 import pytz
+import pyautogui
 
 from selenium_integration import PocketOptionSelenium
 
@@ -91,6 +92,16 @@ class TradeManager:
             logger.info(f"[ℹ️] Unknown command: {cmd}")
 
     # -----------------
+    # Schedule trade
+    # -----------------
+    def schedule_trade(self, entry_dt, signal, martingale_level):
+        delay = (entry_dt - datetime.now(entry_dt.tzinfo)).total_seconds()
+        if delay <= 0:
+            logger.info(f"[⏹️] Signal entry time {entry_dt.strftime('%H:%M')} passed. Skipping trade.")
+            return
+        threading.Timer(delay, self.execute_trade, args=(entry_dt, signal, martingale_level)).start()
+
+    # -----------------
     # Signal entrypoint
     # -----------------
     def handle_signal(self, signal: dict):
@@ -117,7 +128,7 @@ class TradeManager:
         signal['martingale_times'] = valid_mg_times
 
         # Schedule base trade
-        threading.Thread(target=self.execute_trade, args=(entry_dt, signal, 0), daemon=True).start()
+        self.schedule_trade(entry_dt, signal, 0)
 
         # Schedule martingale trades
         for i, mg in enumerate(signal['martingale_times']):
@@ -125,21 +136,12 @@ class TradeManager:
             if level > self.max_martingale:
                 logger.warning(f"[⚠️] Martingale level {level} exceeds max {self.max_martingale}. Skipping.")
                 break
-            threading.Thread(target=self.execute_trade, args=(mg, signal, level), daemon=True).start()
+            self.schedule_trade(mg, signal, level)
 
     # -----------------
     # Execute a single trade
     # -----------------
     def execute_trade(self, entry_dt, signal, martingale_level):
-        delay = (entry_dt - datetime.now(entry_dt.tzinfo)).total_seconds()
-        if delay > 0:
-            fmt = "%H:%M"
-            logger.info(f"[⏰] Waiting {delay:.1f}s until {entry_dt.strftime(fmt)} (level {martingale_level}) for {signal['currency_pair']}")
-            time.sleep(delay)
-        else:
-            logger.info(f"[⏹️] Signal entry time {entry_dt.strftime('%H:%M')} passed. Skipping trade for {signal['currency_pair']}.")
-            return
-
         currency = signal['currency_pair']
         direction = signal.get('direction', 'BUY')
         timeframe = signal.get('timeframe', 'M1')
@@ -152,8 +154,16 @@ class TradeManager:
                         logger.info(f"[⏹️] Base trade WIN — skipping martingale level {martingale_level}.")
                         return
 
-        # Selenium readiness (with last 20s check)
-        ready_info = self.selenium.confirm_asset_ready(currency, entry_dt, timeframe)
+        # Selenium readiness (with retry)
+        ready_info = {"ready": False}
+        for _ in range(3):
+            try:
+                ready_info = self.selenium.confirm_asset_ready(currency, entry_dt, timeframe)
+                if ready_info['ready']:
+                    break
+            except Exception as e:
+                logger.warning(f"[⚠️] Selenium readiness check failed: {e}")
+                time.sleep(0.5)
         if not ready_info['ready']:
             logger.warning(f"[⚠️] Signal missed or asset not ready for {currency} at {entry_dt.strftime('%H:%M')}. Skipping trade.")
             return
@@ -176,11 +186,14 @@ class TradeManager:
             self.pending_trades.append(pending)
 
         # Martingale increase
-        if martingale_level > 0:
-            pyautogui.keyDown('shift'); pyautogui.press('d'); pyautogui.keyUp('shift')
-            with self.pending_lock:
-                pending['increase_count'] += 1
-                self.increase_counts[currency] = self.increase_counts.get(currency, 0) + 1
+        try:
+            if martingale_level > 0:
+                pyautogui.keyDown('shift'); pyautogui.press('d'); pyautogui.keyUp('shift')
+                with self.pending_lock:
+                    pending['increase_count'] += 1
+                    self.increase_counts[currency] = self.increase_counts.get(currency, 0) + 1
+        except Exception as e:
+            logger.warning(f"[⚠️] PyAutoGUI martingale increase failed: {e}")
 
         # Fire trade hotkey
         try:
@@ -220,7 +233,10 @@ class TradeManager:
             with self.pending_lock:
                 incs = self.increase_counts.get(currency_pair, 0)
                 for _ in range(incs):
-                    pyautogui.keyDown('shift'); pyautogui.press('a'); pyautogui.keyUp('shift'); time.sleep(0.05)
+                    try:
+                        pyautogui.keyDown('shift'); pyautogui.press('a'); pyautogui.keyUp('shift'); time.sleep(0.05)
+                    except:
+                        pass
                 self.increase_counts[currency_pair] = 0
                 for t in self.pending_trades:
                     if t['currency_pair'] == currency_pair and not t['resolved']:
@@ -233,26 +249,14 @@ class TradeManager:
                 with self.pending_lock:
                     incs = self.increase_counts.get(currency_pair, 0)
                     for _ in range(incs):
-                        pyautogui.keyDown('shift'); pyautogui.press('a'); pyautogui.keyUp('shift'); time.sleep(0.05)
+                        try:
+                            pyautogui.keyDown('shift'); pyautogui.press('a'); pyautogui.keyUp('shift'); time.sleep(0.05)
+                        except:
+                            pass
                     self.increase_counts[currency_pair] = 0
-                    for t in self.pending_trades:
-                        if t['currency_pair'] == currency_pair and not t['resolved']:
-                            t['resolved'] = True
-                            t['result'] = 'ABORTED_MAX_MARTINGALE'
 
-    # -----------------
-    # Cleanup old trades
-    # -----------------
-    def _cleanup_pending(self):
-        with self.pending_lock:
-            cutoff = datetime.now(pytz.utc) - timedelta(minutes=30)
-            self.pending_trades = [
-                t for t in self.pending_trades
-                if (not t['resolved'] or (t['placed_at'] and t['placed_at'] > cutoff))
-            ]
-
-# -----------------
-# Global instance
-# -----------------
+# -------------------------
+# Instantiate global TradeManager
+# -------------------------
 trade_manager = TradeManager()
         
