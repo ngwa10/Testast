@@ -1,6 +1,6 @@
 """
 Utility functions for core.py
-- Timezone conversion (robust)
+- Timezone conversion: converts signal times to UTC for internal scheduling
 - Interactive logging messages
 """
 
@@ -12,17 +12,17 @@ import logging
 logger = logging.getLogger(__name__)
 
 # --------------------------
-# Convert sender timezone to Jakarta time
+# Convert sender timezone to UTC for scheduling
 # --------------------------
 def timezone_convert(entry_time_str, source_tz_str):
     """
-    Converts a time string (HH:MM) from the sender timezone to Jakarta timezone (UTC+7).
+    Converts a time string (HH:MM) from the sender timezone to UTC.
     Handles:
     - IANA timezone names
     - Fixed UTC offsets (UTC-3, UTC+2, etc.)
-    - Cameroon signals
-    - OTC-X signals (OTC-3 → UTC-3)
-    Returns time as HH:MM in Jakarta timezone, or None if invalid.
+    - Cameroon signals (UTC+1)
+    - OTC-X signals (e.g., OTC-3 -> UTC-3)
+    Returns a datetime object in UTC, or None if the signal has already passed.
     """
     fmt = "%H:%M"
     try:
@@ -33,7 +33,7 @@ def timezone_convert(entry_time_str, source_tz_str):
         if tz_lower.startswith("utc"):
             sign = 1 if "+" in tz_lower else -1
             try:
-                hours = int(tz_lower.split("utc")[1].replace("+","").replace("-",""))
+                hours = int(tz_lower.split("utc")[1].replace("+", "").replace("-", ""))
                 src_tz = pytz.FixedOffset(sign * hours * 60)
             except Exception:
                 src_tz = pytz.UTC
@@ -43,7 +43,7 @@ def timezone_convert(entry_time_str, source_tz_str):
         elif tz_lower.startswith("otc-"):
             try:
                 offset_hours = int(tz_lower.split("-")[1])
-                src_tz = pytz.FixedOffset(-offset_hours * 60)  # OTC-3 → UTC-3
+                src_tz = pytz.FixedOffset(-offset_hours * 60)  # OTC-3 -> UTC-3
             except Exception:
                 src_tz = pytz.UTC
                 logger.warning(f"[⚠️] Could not parse OTC offset from '{source_tz_str}', defaulting UTC")
@@ -61,14 +61,13 @@ def timezone_convert(entry_time_str, source_tz_str):
         entry_dt = datetime.combine(now_src.date(), entry_time)
         entry_dt = src_tz.localize(entry_dt) if entry_dt.tzinfo is None else entry_dt
 
-        # If entry already passed, return None (signal ignored)
+        # If entry already passed, ignore signal
         if entry_dt < now_src:
             return None
 
-        # Convert to Jakarta
-        jakarta_tz = pytz.timezone("Asia/Jakarta")
-        entry_jkt = entry_dt.astimezone(jakarta_tz)
-        return entry_jkt.strftime(fmt)
+        # Convert to UTC for internal scheduling
+        entry_utc = entry_dt.astimezone(pytz.UTC)
+        return entry_utc
 
     except Exception as e:
         logger.warning(f"[⚠️] Failed timezone conversion for '{entry_time_str}' ({source_tz_str}): {e}")
