@@ -16,9 +16,9 @@ async def signal_callback(signal: dict, raw_message=None):
     {
         "currency_pair": "EUR/USD",
         "direction": "BUY",
-        "entry_time": "14:30",
+        "entry_time": "14:30" or datetime.datetime,
         "timeframe": "M1",
-        "martingale_times": ["14:31", "14:32"],
+        "martingale_times": ["14:31", "14:32"] or datetime.datetime,
         "source": "Cameroon"  # or UTC-4 / OTC-3
     }
     """
@@ -34,29 +34,54 @@ async def signal_callback(signal: dict, raw_message=None):
     else:
         tz = pytz.timezone("UTC-3")  # Default OTC-3
 
-    fmt = "%H:%M"
-    entry_time_str = signal["entry_time"]
     now_utc = datetime.utcnow().replace(tzinfo=pytz.UTC)
 
+    # --------------------------
+    # Handle entry_time
+    # --------------------------
+    entry_time_val = signal.get("entry_time")
     try:
-        entry_dt_local = tz.localize(datetime.strptime(entry_time_str, fmt))
+        if isinstance(entry_time_val, datetime):
+            entry_dt_local = entry_time_val.astimezone(tz)
+        elif isinstance(entry_time_val, str):
+            fmt = "%H:%M"
+            entry_dt_local = tz.localize(datetime.combine(datetime.now(tz).date(), datetime.strptime(entry_time_val, fmt).time()))
+        else:
+            logging.error(f"[❌] entry_time has invalid type: {type(entry_time_val)}")
+            return
+
         entry_dt_utc = entry_dt_local.astimezone(pytz.UTC)
         delta_sec = (entry_dt_utc - now_utc).total_seconds()
     except Exception as e:
-        logging.error(f"[❌] Invalid entry_time format '{entry_time_str}': {e}")
+        logging.error(f"[❌] Failed to parse entry_time '{entry_time_val}': {e}")
         return
 
     # --------------------------
     # Validate timing
     # --------------------------
     if delta_sec < 0:
-        logging.info(f"[⏹️] Signal entry time {entry_time_str} already passed. Ignored.")
+        logging.info(f"[⏹️] Signal entry time {entry_dt_local.strftime('%H:%M')} already passed. Ignored.")
         return
     elif delta_sec > 10*60:
-        logging.info(f"[⚠️] Signal entry time {entry_time_str} too far in the future (>10min). Ignored.")
+        logging.info(f"[⚠️] Signal entry time {entry_dt_local.strftime('%H:%M')} too far in the future (>10min). Ignored.")
         return
 
-    logging.info(f"[📩] Signal received for {signal['currency_pair']} ({signal['direction']}) at {entry_time_str} {msg_source} — scheduling trade 🔥")
+    logging.info(f"[📩] Signal received for {signal['currency_pair']} ({signal['direction']}) at {entry_dt_local.strftime('%H:%M')} {msg_source} — scheduling trade 🔥")
+
+    # --------------------------
+    # Ensure martingale times are datetime objects
+    # --------------------------
+    mg_times_fixed = []
+    for t in signal.get("martingale_times", []):
+        try:
+            if isinstance(t, datetime):
+                mg_times_fixed.append(t.astimezone(tz))
+            elif isinstance(t, str):
+                mg_times_fixed.append(tz.localize(datetime.combine(datetime.now(tz).date(), datetime.strptime(t, "%H:%M").time())))
+        except Exception as e:
+            logging.warning(f"[⚠️] Invalid martingale time '{t}': {e}")
+    signal['martingale_times'] = mg_times_fixed
+    signal['entry_time'] = entry_dt_local
 
     # --------------------------
     # Forward to TradeManager
@@ -86,4 +111,4 @@ async def command_callback(cmd: str):
         logging.info("[✅] Start command received — trading enabled.")
     elif cmd.startswith("/stop"):
         logging.info("[🛑] Stop command received — trading disabled.")
-    
+                          
