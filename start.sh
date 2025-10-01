@@ -2,10 +2,10 @@
 set -e
 
 # -------------------------
-# Start VNC server
+# Start VNC server (passwordless)
 # -------------------------
-vncserver :1 -geometry ${VNC_RESOLUTION} -depth 24
-echo "[✅] VNC server started on :1 with resolution ${VNC_RESOLUTION}"
+vncserver :1 -geometry ${VNC_RESOLUTION} -depth 24 -SecurityTypes None
+echo "[✅] VNC server started on :1 with resolution ${VNC_RESOLUTION} (passwordless)"
 
 # -------------------------
 # Start noVNC
