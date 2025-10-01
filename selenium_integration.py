@@ -16,7 +16,7 @@ import time
 import threading
 import random
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -49,14 +49,18 @@ class PocketOptionSelenium:
         session_id = str(uuid.uuid4())
         chrome_options.add_argument(f"--user-data-dir=/tmp/chrome-user-data-{session_id}")
 
-        def setup_driver(self, headless=False):
-    
-    driver = webdriver.Chrome(service=service, options=chrome_options)
-    driver.get("https://pocketoption.com/en/login/")
-    logger = getattr(self.trade_manager, "logger", None)  # ✅ use self.trade_manager
-    print("[✅] Chrome started and navigated to Pocket Option login.")
-    return driver
+        if headless:
+            chrome_options.add_argument("--headless=new")
 
+        service = Service("/usr/local/bin/chromedriver")
+        driver = webdriver.Chrome(service=service, options=chrome_options)
+        driver.get("https://pocketoption.com/en/login/")
+        logger = getattr(self.trade_manager, "logger", None)  # ✅ use self.trade_manager
+        if logger:
+            logger.info("[✅] Chrome started and navigated to Pocket Option login.")
+        else:
+            print("[✅] Chrome started and navigated to Pocket Option login.")
+        return driver
 
     # -----------------
     # Detect current asset visible in UI
