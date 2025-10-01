@@ -7,7 +7,6 @@ set -e
 mkdir -p /home/dockuser/.vnc /home/dockuser/chrome-profile
 chmod 700 /home/dockuser/.vnc
 
-# Create xstartup script for VNC
 cat > /home/dockuser/.vnc/xstartup << 'EOF'
 #!/bin/bash
 export XKL_XMODMAP_DISABLE=1
@@ -32,13 +31,7 @@ cd /opt/noVNC
 sleep 5
 
 # =========================
-# Start core.py (trade execution logic)
-# =========================
-echo "Starting trading core..."
-python3 /home/dockuser/core.py &
-
-# =========================
-# Start Telegram listener with callbacks
+# Start Telegram listener (background OK if needed)
 # =========================
 echo "Starting Telegram listener..."
 python3 - << 'PYTHON_EOF' &
@@ -52,7 +45,7 @@ start_telegram_listener(signal_callback, command_callback)
 PYTHON_EOF
 
 # =========================
-# Keep container running
+# Start core.py in foreground (IMPORTANT!)
 # =========================
-echo "✅ All services started. Container ready!"
-tail -f /dev/null
+echo "Starting trading core (foreground)..."
+exec python3 -u /home/dockuser/core.py
