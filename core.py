@@ -4,48 +4,8 @@ import random
 import logging
 import json
 from datetime import datetime, timedelta
-import pyautogui
 import pytz
 
-# -------------------------
-# Timezone conversion import
-# -------------------------
-try:
-    from core_utils import timezone_convert as convert_signal_time
-except Exception:
-    def convert_signal_time(entry_time_val, source_tz_str):
-        if isinstance(entry_time_val, datetime):
-            return entry_time_val
-
-        fmt = "%H:%M"
-        try:
-            entry_dt_naive = datetime.strptime(entry_time_val, fmt)
-            tz_lower = source_tz_str.lower().strip()
-            if tz_lower == "cameroon":
-                src = pytz.timezone("Africa/Douala")
-            elif tz_lower == "utc-4":
-                src = pytz.FixedOffset(-240)
-            elif tz_lower == "utc-3":
-                src = pytz.FixedOffset(-180)
-            else:
-                try:
-                    src = pytz.timezone(source_tz_str)
-                except Exception:
-                    src = pytz.UTC
-
-            now_src = datetime.now(pytz.utc).astimezone(src)
-            entry_dt = datetime.combine(now_src.date(), entry_dt_naive.time())
-            entry_dt = src.localize(entry_dt) if entry_dt.tzinfo is None else entry_dt
-
-            if entry_dt < now_src:
-                return None
-            return entry_dt
-        except Exception:
-            return None
-
-# -------------------------
-# Selenium integration
-# -------------------------
 from selenium_integration import PocketOptionSelenium
 
 # -------------------------
@@ -71,6 +31,36 @@ def random_log():
     return random.choice(LOG_MESSAGES) if LOG_MESSAGES else ""
 
 # -------------------------
+# Timezone conversion helper
+# -------------------------
+def convert_signal_time(entry_time_val, source_tz_str):
+    if isinstance(entry_time_val, datetime):
+        return entry_time_val
+    fmt = "%H:%M"
+    try:
+        entry_dt_naive = datetime.strptime(entry_time_val, fmt)
+        tz_lower = source_tz_str.lower().strip()
+        if tz_lower == "cameroon":
+            src = pytz.timezone("Africa/Douala")
+        elif tz_lower == "utc-4":
+            src = pytz.FixedOffset(-240)
+        elif tz_lower == "utc-3":
+            src = pytz.FixedOffset(-180)
+        else:
+            try:
+                src = pytz.timezone(source_tz_str)
+            except:
+                src = pytz.UTC
+        now_src = datetime.now(pytz.utc).astimezone(src)
+        entry_dt = datetime.combine(now_src.date(), entry_dt_naive.time())
+        entry_dt = src.localize(entry_dt) if entry_dt.tzinfo is None else entry_dt
+        if entry_dt < now_src:
+            return None
+        return entry_dt
+    except Exception:
+        return None
+
+# -------------------------
 # TradeManager
 # -------------------------
 class TradeManager:
@@ -81,20 +71,20 @@ class TradeManager:
         self.pending_trades = []
         self.pending_lock = threading.Lock()
         self.increase_counts = {}
-        self.selenium = PocketOptionSelenium(self, headless=False)
+        self.selenium = PocketOptionSelenium(self, headless=True)
         logger.info(f"TradeManager initialized | base_amount: {base_amount}, max_martingale: {max_martingale}")
 
     # -----------------
-    # Commands
+    # Handle commands
     # -----------------
     def handle_command(self, cmd: str):
         cmd = cmd.strip().lower()
         if cmd.startswith("/start"):
             self.trading_active = True
-            logger.info("[🚀] Trading started — Precision firing.")
+            logger.info("[🚀] Trading started.")
         elif cmd.startswith("/stop"):
             self.trading_active = False
-            logger.info("[⏹️] Trading stopped — taking a break.")
+            logger.info("[⏹️] Trading stopped.")
         elif cmd.startswith("/status"):
             logger.info("[ℹ️] Trading status: ACTIVE" if self.trading_active else "[ℹ️] Trading status: PAUSED")
         else:
@@ -138,37 +128,21 @@ class TradeManager:
             threading.Thread(target=self.execute_trade, args=(mg, signal, level), daemon=True).start()
 
     # -----------------
-    # Execute single trade
+    # Execute a single trade
     # -----------------
     def execute_trade(self, entry_dt, signal, martingale_level):
+        delay = (entry_dt - datetime.now(entry_dt.tzinfo)).total_seconds()
+        if delay > 0:
+            fmt = "%H:%M"
+            logger.info(f"[⏰] Waiting {delay:.1f}s until {entry_dt.strftime(fmt)} (level {martingale_level}) for {signal['currency_pair']}")
+            time.sleep(delay)
+        else:
+            logger.info(f"[⏹️] Signal entry time {entry_dt.strftime('%H:%M')} passed. Skipping trade for {signal['currency_pair']}.")
+            return
+
         currency = signal['currency_pair']
         direction = signal.get('direction', 'BUY')
         timeframe = signal.get('timeframe', 'M1')
-
-        # Wait until entry time minus 20 seconds
-        now = datetime.now(entry_dt.tzinfo)
-        wait_until = entry_dt - timedelta(seconds=20)
-        delay = (wait_until - now).total_seconds()
-        if delay > 0:
-            fmt = "%H:%M:%S"
-            logger.info(f"[⏰] Waiting {delay:.1f}s until {wait_until.strftime(fmt)} for {currency} (level {martingale_level})")
-            time.sleep(delay)
-
-        # Try to confirm asset readiness until 20 seconds before entry time
-        ready = None
-        while datetime.now(entry_dt.tzinfo) < entry_dt - timedelta(seconds=20):
-            try:
-                ready = self.selenium.confirm_asset_ready(currency, entry_dt, timeframe)
-                if ready.get("ready"):
-                    break
-            except Exception as e:
-                logger.warning(f"[⚠️] Selenium confirm_asset_ready failed: {e}")
-            time.sleep(0.5)  # retry every 0.5s
-
-        # If still not ready, log as missed
-        if not ready or not ready.get("ready"):
-            logger.warning(f"[❌] Signal missed: Asset {currency} was not ready before entry time {entry_dt.strftime('%H:%M:%S')}")
-            return
 
         # Martingale check
         if martingale_level > 0:
@@ -178,8 +152,16 @@ class TradeManager:
                         logger.info(f"[⏹️] Base trade WIN — skipping martingale level {martingale_level}.")
                         return
 
-        # Prepare pending trade entry
+        # Selenium readiness (with last 20s check)
+        ready_info = self.selenium.confirm_asset_ready(currency, entry_dt, timeframe)
+        if not ready_info['ready']:
+            logger.warning(f"[⚠️] Signal missed or asset not ready for {currency} at {entry_dt.strftime('%H:%M')}. Skipping trade.")
+            return
+
+        # Prepare pending trade
         trade_id = f"{currency}_{entry_dt.strftime('%H%M')}_{martingale_level}_{int(time.time()*1000)}"
+        logger.info(f"[🎯] READY to place trade {trade_id} — {direction} level {martingale_level}")
+
         with self.pending_lock:
             pending = {
                 'id': trade_id,
@@ -213,11 +195,7 @@ class TradeManager:
             pending['placed_at'] = datetime.now(entry_dt.tzinfo)
 
         # Watch trade result via Selenium
-        try:
-            self.selenium.watch_trade_for_result(currency, pending['placed_at'])
-        except Exception:
-            pass
-
+        self.selenium.watch_trade_for_result(currency, pending['placed_at'])
         logger.info(f"[📝] Trade placed: {trade_id} — awaiting result. {random_log()}")
 
     # -----------------
@@ -242,8 +220,7 @@ class TradeManager:
             with self.pending_lock:
                 incs = self.increase_counts.get(currency_pair, 0)
                 for _ in range(incs):
-                    pyautogui.keyDown('shift'); pyautogui.press('a'); pyautogui.keyUp('shift')
-                    time.sleep(0.05)
+                    pyautogui.keyDown('shift'); pyautogui.press('a'); pyautogui.keyUp('shift'); time.sleep(0.05)
                 self.increase_counts[currency_pair] = 0
                 for t in self.pending_trades:
                     if t['currency_pair'] == currency_pair and not t['resolved']:
@@ -256,8 +233,7 @@ class TradeManager:
                 with self.pending_lock:
                     incs = self.increase_counts.get(currency_pair, 0)
                     for _ in range(incs):
-                        pyautogui.keyDown('shift'); pyautogui.press('a'); pyautogui.keyUp('shift')
-                        time.sleep(0.05)
+                        pyautogui.keyDown('shift'); pyautogui.press('a'); pyautogui.keyUp('shift'); time.sleep(0.05)
                     self.increase_counts[currency_pair] = 0
                     for t in self.pending_trades:
                         if t['currency_pair'] == currency_pair and not t['resolved']:
@@ -279,4 +255,4 @@ class TradeManager:
 # Global instance
 # -----------------
 trade_manager = TradeManager()
-                    
+        
