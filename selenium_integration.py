@@ -9,7 +9,7 @@ Final selenium_integration.py — PocketOptionSelenium (updated with persistent 
     - detect_trade_result() -> scans trade history
     - start_result_monitor() -> background thread to detect results and callback to core
     - watch_trade_for_result(currency_pair, placed_at) -> targeted watcher
-- Automatically fills login email & password from .env file into Pocket Option login page
+- Automatically fills login email & password from hardcoded credentials (testing)
 - Keeps Chrome window open indefinitely to stay connected to dashboard
 """
 
@@ -27,8 +27,7 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import pyautogui
-# Note: dotenv import kept in case you want to re-enable environment loading later.
-from dotenv import load_dotenv  # ✅ kept for convenience
+from dotenv import load_dotenv  # kept for convenience if you revert to env later
 
 CHECK_INTERVAL = 0.5  # seconds
 
@@ -39,7 +38,7 @@ CHECK_INTERVAL = 0.5  # seconds
 EMAIL = "mylivemyfuture@123gmail.com"
 PASSWORD = "AaCcWw3468,"
 
-# If you prefer to use .env again, comment the two lines above and uncomment below:
+# If you later want to use .env again, comment above and uncomment below:
 # load_dotenv()
 # EMAIL = os.getenv("EMAIL")
 # PASSWORD = os.getenv("PASSWORD")
@@ -89,50 +88,82 @@ class PocketOptionSelenium:
             print("[✅] Chrome started and navigated to Pocket Option login.")
 
         # -----------------------
-        # Auto-fill login credentials using JS
+        # Auto-fill login credentials from hardcoded values (original approach)
         # -----------------------
         try:
             wait = WebDriverWait(driver, 30)
+            # Wait for email & password fields (names used in your original file)
             email_field = wait.until(EC.presence_of_element_located((By.NAME, "email")))
             password_field = wait.until(EC.presence_of_element_located((By.NAME, "password")))
 
-            # Use JS injection to safely set the values
-            driver.execute_script("arguments[0].value = arguments[1];", email_field, EMAIL)
-            driver.execute_script("arguments[0].value = arguments[1];", password_field, PASSWORD)
-            print("[✅] Email and password set successfully via JS.")
-
-            # Double-check what was entered (debug)
+            # Clear and input credentials safely
             try:
-                typed_pw = driver.execute_script("return arguments[0].value;", password_field)
-                print("[🔍] Password length typed:", len(typed_pw))
+                email_field.clear()
             except Exception:
-                # If the field doesn't expose value due to custom widgets, ignore
-                print("[🔍] Could not read back password value (field may be custom).")
-
-            # Click login button if present
+                pass
             try:
-                # sometimes the login button is inside a form or has a different selector; try common fallbacks
+                email_field.send_keys(EMAIL)
+            except Exception as e:
+                # fallback to JS if send_keys fails for email
+                try:
+                    driver.execute_script("arguments[0].value = arguments[1];", email_field, EMAIL)
+                except Exception:
+                    print(f"[⚠️] Failed to set email via send_keys and JS: {e}")
+
+            try:
+                password_field.clear()
+            except Exception:
+                pass
+
+            # Primary method: send_keys
+            try:
+                password_field.send_keys(PASSWORD)
+            except Exception:
+                # Fallback: click and type using pyautogui (original technique)
+                try:
+                    password_field.click()
+                    time.sleep(0.1)
+                    pyautogui.typewrite(PASSWORD, interval=0.05)
+                except Exception as pg_e:
+                    # Final fallback: JS injection if keyboard typing fails
+                    try:
+                        driver.execute_script("arguments[0].value = arguments[1];", password_field, PASSWORD)
+                        print("[ℹ️] password set via JS fallback after pyautogui failure.")
+                    except Exception as final_e:
+                        print(f"[⚠️] Failed to enter password by send_keys/pyautogui/JS: {final_e}")
+
+            # Optional: Click login button automatically (try a few common selectors)
+            try:
                 login_button = None
                 try:
                     login_button = driver.find_element(By.CSS_SELECTOR, "button[type='submit']")
                 except Exception:
-                    # Fallback: find button by text (may require localization)
+                    # fallback: search for a visible button with login/sign text
                     btns = driver.find_elements(By.TAG_NAME, "button")
                     for b in btns:
                         try:
-                            if "log" in b.text.lower() or "sign" in b.text.lower():
+                            txt = b.text.strip().lower()
+                            if txt and ("log" in txt or "sign" in txt):
                                 login_button = b
                                 break
                         except Exception:
                             continue
 
                 if login_button:
-                    driver.execute_script("arguments[0].click();", login_button)
-                    print("[🔐] Login button clicked automatically.")
+                    try:
+                        login_button.click()
+                        print("[🔐] Credentials entered and login button clicked automatically.")
+                    except Exception:
+                        # fallback to JS click
+                        try:
+                            driver.execute_script("arguments[0].click();", login_button)
+                            print("[🔐] Credentials entered and login button clicked via JS.")
+                        except Exception as e_click:
+                            print(f"[ℹ️] Credentials filled, but clicking login failed: {e_click}")
                 else:
                     print("[ℹ️] Credentials filled, but login button not found. Please click manually.")
-            except Exception:
-                print("[ℹ️] Failed to click login button via JS. Please click manually.")
+            except Exception as e:
+                print(f"[⚠️] Error while attempting to click login button: {e}")
 
         except Exception as e:
             print(f"[⚠️] Auto-login failed: {e}")
@@ -179,11 +210,11 @@ class PocketOptionSelenium:
                     opt.click()
                     time.sleep(0.2)
                     break
-            # small randomized click to move focus away (mimic human behavior)
+            # keep original pyautogui click (may cause VNC issues in some setups)
             try:
                 pyautogui.click(random.randint(100, 300), random.randint(100, 300))
             except Exception:
-                # pyautogui may not be available/usable in some containers - ignore if it fails
+                # ignore pyautogui failure (headless/VNC may not support it)
                 pass
             print(f"[🎯] Timeframe set to {timeframe}")
         except Exception as e:
@@ -248,3 +279,4 @@ class PocketOptionSelenium:
                 time.sleep(0.5)
 
         threading.Thread(target=watch, daemon=True).start()
+    
