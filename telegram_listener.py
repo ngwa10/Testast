@@ -37,6 +37,15 @@ def log_error(msg):
         handler.flush()
 
 # =========================
+# Import core_utils for timezone conversion
+# =========================
+try:
+    from core_utils import timezone_convert
+except Exception:
+    timezone_convert = None
+    log_error("[⚠️] core_utils.timezone_convert not found, signals will use raw strings!")
+
+# =========================
 # Telegram Client Setup
 # =========================
 client = TelegramClient('bot_session', api_id, api_hash)
@@ -48,9 +57,9 @@ def parse_signal(message_text):
     result = {
         "currency_pair": None,
         "direction": None,
-        "entry_time": None,
+        "entry_time": None,          # Will hold UTC datetime
         "timeframe": None,
-        "martingale_times": [],
+        "martingale_times": [],      # Will hold UTC datetimes
         "source": "OTC-3"
     }
 
@@ -60,12 +69,19 @@ def parse_signal(message_text):
 
         is_anna_signal = "anna signals" in message_text.lower()
         clean_text = re.sub(r'[^\x00-\x7F]+', ' ', message_text)
+
+        # ----------------
+        # Currency Pair
+        # ----------------
         pair_match = re.search(r'([A-Z]{3}/[A-Z]{3})(?:[\s_\-]?OTC)?', clean_text, re.IGNORECASE)
         if not pair_match:
             pair_match = re.search(r'(?:Pair:|CURRENCY PAIR:|📊)\s*([\w\/\-]+)', clean_text)
         if pair_match:
             result['currency_pair'] = pair_match.group(0).strip()
 
+        # ----------------
+        # Direction
+        # ----------------
         direction_match = re.search(r'(BUY|SELL|CALL|PUT|🔼|🟥|🟩|🔽|⏺ BUY|⏺ SELL)', message_text, re.IGNORECASE)
         if direction_match:
             direction = direction_match.group(1).upper()
@@ -74,10 +90,32 @@ def parse_signal(message_text):
             elif direction in ['PUT', 'SELL', '🔽', '🟥', '⏺ SELL']:
                 result['direction'] = 'SELL'
 
+        # ----------------
+        # Entry Time
+        # ----------------
         entry_time_match = re.search(r'(?:Entry Time:|Entry at|TIME \(UTC.*\):|⏺ Entry at)\s*(\d{2}:\d{2})', message_text)
         if entry_time_match:
-            result['entry_time'] = entry_time_match.group(1)
+            entry_time_str = entry_time_match.group(1)
+            # Detect source first
+            source = "OTC-3"
+            if "💥 GET THIS SIGNAL HERE!" in message_text:
+                source = "UTC-4"
+            elif "💥 TRADE WITH DESMOND!" in message_text:
+                source = "Cameroon"
+            result['source'] = source
 
+            if timezone_convert:
+                entry_utc = timezone_convert(entry_time_str, source)
+                if not entry_utc:
+                    log_info(f"[⚠️] Signal entry time {entry_time_str} already passed, skipping.")
+                    return None
+                result['entry_time'] = entry_utc
+            else:
+                result['entry_time'] = entry_time_str  # fallback
+
+        # ----------------
+        # Timeframe
+        # ----------------
         timeframe_match = re.search(r'Expiration:?\s*(M1|M5|1 Minute|5 Minute|5M|1M|5-minute)', message_text, re.IGNORECASE)
         if timeframe_match:
             tf = timeframe_match.group(1).lower()
@@ -85,32 +123,29 @@ def parse_signal(message_text):
         if not result['timeframe']:
             result['timeframe'] = 'M1' if is_anna_signal else 'M5'
 
+        # ----------------
+        # Martingale times
+        # ----------------
         martingale_matches = re.findall(
             r'(?:Level \d+|level(?: at)?|PROTECTION|level At|level|ª PROTECTION)\D*[:\-\—>]*\s*(\d{2}:\d{2})',
             message_text, re.IGNORECASE
         )
-        result['martingale_times'] = martingale_matches
+        martingale_utc_times = []
+        for t in martingale_matches:
+            if timezone_convert:
+                t_utc = timezone_convert(t, result['source'])
+                if t_utc:
+                    martingale_utc_times.append(t_utc)
+        result['martingale_times'] = martingale_utc_times
 
-        # Default Anna martingale times
+        # Default Anna martingale if none found
         if is_anna_signal and not result['martingale_times'] and result['entry_time']:
-            fmt = "%H:%M:%S" if len(result['entry_time']) == 8 else "%H:%M"
-            entry_dt = datetime.strptime(result['entry_time'], fmt)
-            interval = 1
-            first_martingale = entry_dt + timedelta(minutes=interval)
-            second_martingale = first_martingale + timedelta(minutes=interval)
-            result['martingale_times'] = [
-                first_martingale.strftime(fmt),
-                second_martingale.strftime(fmt)
-            ]
-            log_info(f"[🔁] Default Anna martingale times applied: {result['martingale_times']}")
-
-        # Detect timezone/source
-        if "💥 GET THIS SIGNAL HERE!" in message_text:
-            result["source"] = "UTC-4"
-        elif "💥 TRADE WITH DESMOND!" in message_text:
-            result["source"] = "Cameroon"
-        else:
-            result["source"] = "OTC-3"
+            entry_dt = result['entry_time']
+            interval = timedelta(minutes=1)
+            first_mg = entry_dt + interval
+            second_mg = first_mg + interval
+            result['martingale_times'] = [first_mg, second_mg]
+            log_info(f"[🔁] Default Anna martingale times applied: {[t.strftime('%H:%M') for t in result['martingale_times']]}")
 
         if not result['currency_pair'] or not result['entry_time'] or not result['direction']:
             return None
@@ -155,4 +190,4 @@ def start_telegram_listener(signal_callback, command_callback):
         client.run_until_disconnected()
     except Exception as e:
         log_error(f"[❌] Telegram listener failed: {e}")
-                
+    
