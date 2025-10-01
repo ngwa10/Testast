@@ -1,5 +1,5 @@
 """
-Final selenium_integration.py — PocketOptionSelenium (updated with .env login support).
+Final selenium_integration.py — PocketOptionSelenium (updated with persistent dashboard & .env login).
 
 - Uses a unique --user-data-dir per session (UUID) to avoid "already in use" errors.
 - Uses signal's original timezone for scheduling and entry checks (no Jakarta time).
@@ -10,6 +10,7 @@ Final selenium_integration.py — PocketOptionSelenium (updated with .env login 
     - start_result_monitor() -> background thread to detect results and callback to core
     - watch_trade_for_result(currency_pair, placed_at) -> targeted watcher
 - Automatically fills login email & password from .env file into Pocket Option login page
+- Keeps Chrome window open indefinitely to stay connected to dashboard
 """
 
 import time
@@ -30,7 +31,7 @@ from dotenv import load_dotenv  # ✅ NEW
 
 CHECK_INTERVAL = 0.5  # seconds
 
-# ✅ Load credentials from .env
+# Load credentials from .env
 load_dotenv()
 EMAIL = os.getenv("EMAIL")
 PASSWORD = os.getenv("PASSWORD")
@@ -60,6 +61,9 @@ class PocketOptionSelenium:
         session_id = str(uuid.uuid4())
         chrome_options.add_argument(f"--user-data-dir=/tmp/chrome-user-data-{session_id}")
 
+        # Keep window open always
+        chrome_options.add_experimental_option("detach", True)
+
         if headless:
             chrome_options.add_argument("--headless=new")
 
@@ -73,18 +77,24 @@ class PocketOptionSelenium:
             print("[✅] Chrome started and navigated to Pocket Option login.")
 
         # -----------------------
-        # 🔐 Auto-fill login credentials from .env
+        # Auto-fill login credentials from .env
         # -----------------------
         try:
             wait = WebDriverWait(driver, 30)
             email_field = wait.until(EC.presence_of_element_located((By.NAME, "email")))
             password_field = wait.until(EC.presence_of_element_located((By.NAME, "password")))
 
-            # Clear and input credentials
+            # Clear and input credentials safely
             email_field.clear()
             email_field.send_keys(EMAIL)
+
             password_field.clear()
-            password_field.send_keys(PASSWORD)
+            # Use pyautogui as fallback if send_keys fails
+            try:
+                password_field.send_keys(PASSWORD)
+            except Exception:
+                password_field.click()
+                pyautogui.typewrite(PASSWORD, interval=0.05)
 
             # Optional: Click login button automatically
             try:
@@ -194,4 +204,3 @@ class PocketOptionSelenium:
                     return
                 time.sleep(0.5)
         threading.Thread(target=watch, daemon=True).start()
-        
