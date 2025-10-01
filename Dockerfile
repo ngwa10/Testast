@@ -52,6 +52,7 @@ RUN useradd -m -s /bin/bash -u 1000 dockuser \
 RUN pip3 install --no-cache-dir pytz
 RUN pip3 install --no-cache-dir selenium telethon
 RUN pip3 install --no-cache-dir numpy
+RUN pip3 install --no-cache-dir python-dotenv   # 👈 ADD THIS LINE
 
 # 🧰 Install pyautogui + X11 deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
