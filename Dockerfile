@@ -6,25 +6,26 @@ ENV DEBIAN_FRONTEND=noninteractive \
     NO_VNC_HOME=/opt/noVNC
 
 # -------------------------
-# Install minimal packages
+# Install basic packages
 # -------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl wget ca-certificates gnupg2 \
-    python3 python3-pip git \
+    python3 python3-pip git unzip \
+    tigervnc-standalone-server tigervnc-tools \
+    xfce4-session xfce4-panel xfce4-terminal dbus-x11 procps dos2unix \
+    python3-tk python3-dev scrot xclip xsel \
     && rm -rf /var/lib/apt/lists/*
 
 # -------------------------
-# Install Google Chrome
+# Install Chrome
 # -------------------------
 RUN curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg \
-    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    google-chrome-stable unzip \
+    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list \
+    && apt-get update && apt-get install -y --no-install-recommends google-chrome-stable \
     && rm -rf /var/lib/apt/lists/*
 
 # -------------------------
-# Install ChromeDriver (auto-match)
+# Install ChromeDriver matching Chrome version
 # -------------------------
 RUN CHROME_VERSION=$(google-chrome --version | sed 's/[^0-9.]//g' | cut -d. -f1) \
     && LATEST_URL=$(curl -s "https://googlechromelabs.github.io/chrome-for-testing/LATEST_RELEASE_${CHROME_VERSION}") \
@@ -35,15 +36,9 @@ RUN CHROME_VERSION=$(google-chrome --version | sed 's/[^0-9.]//g' | cut -d. -f1)
     && rm -rf /tmp/chromedriver.zip /usr/local/bin/chromedriver-linux64
 
 # -------------------------
-# Install VNC, XFCE desktop
+# Install Python packages
 # -------------------------
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    tigervnc-standalone-server \
-    tigervnc-tools \
-    xfce4-session xfce4-panel xfce4-terminal \
-    dbus-x11 procps dos2unix \
-    python3-tk python3-dev scrot xclip xsel \
-    && rm -rf /var/lib/apt/lists/*
+RUN pip3 install --no-cache-dir pytz selenium telethon numpy python-dotenv pyautogui pillow
 
 # -------------------------
 # Install noVNC
@@ -53,42 +48,25 @@ RUN git clone --depth 1 --branch v1.4.0 https://github.com/novnc/noVNC.git ${NO_
     && chmod +x ${NO_VNC_HOME}/utils/websockify/run
 
 # -------------------------
-# Create user
+# Create non-root user
 # -------------------------
 RUN useradd -m -s /bin/bash -u 1000 dockuser \
     && mkdir -p /home/dockuser/.vnc /home/dockuser/chrome-profile \
     && chown -R dockuser:dockuser /home/dockuser
 
-# -------------------------
-# Install Python packages
-# -------------------------
-RUN pip3 install --no-cache-dir pytz selenium telethon numpy python-dotenv pyautogui pillow
+USER dockuser
+WORKDIR /home/dockuser
 
 # -------------------------
-# Copy scripts & files
+# Copy bot files
 # -------------------------
 COPY start.sh /usr/local/bin/start.sh
 RUN dos2unix /usr/local/bin/start.sh && chmod +x /usr/local/bin/start.sh
 
-COPY .env /home/dockuser/.env
-COPY core.py /home/dockuser/core.py
-COPY core_utils.py /home/dockuser/core_utils.py
-COPY logs.json /home/dockuser/logs.json
-COPY telegram_listener.py /home/dockuser/telegram_listener.py
-COPY telegram_callbacks.py /home/dockuser/telegram_callbacks.py
-COPY selenium_integration.py /home/dockuser/selenium_integration.py
+COPY .env core.py selenium_integration.py telegram_listener.py telegram_callbacks.py core_utils.py logs.json /home/dockuser/
+RUN chown dockuser:dockuser /home/dockuser/.env /home/dockuser/core.py /home/dockuser/selenium_integration.py \
+    /home/dockuser/telegram_listener.py /home/dockuser/telegram_callbacks.py /home/dockuser/core_utils.py /home/dockuser/logs.json
 
-RUN chown -R dockuser:dockuser /home/dockuser
-
-# -------------------------
-# Ports
-# -------------------------
 EXPOSE 5901 6080
-
-# -------------------------
-# User & workdir
-# -------------------------
-USER dockuser
-WORKDIR /home/dockuser
 
 ENTRYPOINT ["/usr/local/bin/start.sh"]
