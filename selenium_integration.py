@@ -10,6 +10,7 @@ Features:
 - Trade result monitoring (WIN / LOSS)
 - Optional targeted watcher
 - Balance fetching (real & demo)
+- Structured asset/timeframe readiness response
 """
 
 import time
@@ -18,7 +19,6 @@ import random
 import uuid
 from datetime import datetime, timedelta
 import pytz
-import os
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
@@ -26,7 +26,6 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import pyautogui
-from dotenv import load_dotenv
 
 # ---------------------------
 # HARDCODED CREDENTIALS (for testing only)
@@ -48,6 +47,9 @@ class PocketOptionSelenium:
         self.monitor_thread = None
         self.start_result_monitor()
 
+    # -----------------
+    # Setup Chrome
+    # -----------------
     def setup_driver(self, headless=False):
         chrome_options = Options()
         chrome_options.add_argument("--no-sandbox")
@@ -67,7 +69,6 @@ class PocketOptionSelenium:
         service = Service("/usr/local/bin/chromedriver")
         driver = webdriver.Chrome(service=service, options=chrome_options)
         driver.get("https://pocketoption.com/en/login/")
-
         print("[✅] Chrome started and navigated to Pocket Option login.")
 
         # Auto-login
@@ -150,17 +151,14 @@ class PocketOptionSelenium:
                 print(f"[🎯] Asset already selected: {currency_pair}")
                 return True
 
-            # Open dropdown
             current_asset_el.click()
             time.sleep(random.uniform(1, 3))
 
-            # Type in search bar
             search_input = self.driver.find_element(By.CSS_SELECTOR, ".asset-dropdown input")
             search_input.clear()
             search_input.send_keys(currency_pair)
             time.sleep(random.uniform(1, 2))
 
-            # Click top result with correct OTC
             options = self.driver.find_elements(By.CSS_SELECTOR, ".asset-dropdown .option")
             selected = False
             for opt in options:
@@ -170,7 +168,6 @@ class PocketOptionSelenium:
                     selected = True
                     break
 
-            # Random click outside dropdown to close
             pyautogui.click(random.randint(400, 800), random.randint(200, 400))
             time.sleep(random.uniform(0.5, 1.5))
 
@@ -206,7 +203,6 @@ class PocketOptionSelenium:
                     selected = True
                     break
 
-            # Random click outside dropdown
             pyautogui.click(random.randint(400, 800), random.randint(200, 400))
             time.sleep(random.uniform(0.5, 1.5))
 
@@ -280,15 +276,24 @@ class PocketOptionSelenium:
         threading.Thread(target=watch, daemon=True).start()
 
     # -----------------
-    # Confirm asset ready (entry time)
+    # Confirm asset ready (structured response)
     # -----------------
-    def confirm_asset_ready(self, asset_name, entry_time_dt):
+    def confirm_asset_ready(self, asset_name, entry_time_dt, timeframe="M1"):
+        """
+        Ensure asset and timeframe are selected and ready.
+        Returns a dict:
+            {"ready": True/False, "asset": asset_name, "timeframe": timeframe}
+        """
         try:
             now = datetime.now(entry_time_dt.tzinfo)
             if now > entry_time_dt:
                 print(f"[❌] Entry time passed for {asset_name}")
-                return False
+                return {"ready": False, "asset": asset_name, "timeframe": timeframe}
         except:
             pass
-        return self.select_asset(asset_name)
-        
+
+        asset_ready = self.select_asset(asset_name)
+        timeframe_ready = self.set_timeframe(timeframe)
+        ready = asset_ready and timeframe_ready
+
+        return {"ready": ready, "asset": asset_name, "timeframe": timeframe}
