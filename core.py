@@ -1,9 +1,9 @@
 """
-Final core.py — TradeManager and orchestration.
+Final core.py — TradeManager and orchestration (updated).
 
 Features:
 - Receives parsed signals from Telegram listener.
-- Converts sender time -> UTC (uses core_utils.timezone_convert if available).
+- Uses signal's original timezone for scheduling and trade execution.
 - Schedules direct and martingale trades.
 - Fires keystrokes (hotkeys) using Pocket Option mappings:
     Shift+W : BUY
@@ -12,9 +12,9 @@ Features:
     Shift+A : DECREASE amount (reset)
     Shift+TAB : SWITCH ASSET
 - Tracks pending trades and martingale increases.
-- Waits a short 0.5s before martingale entry to let Selenium detect direct-win.
-- Resets trade amounts only when a WIN arrives or max martingale is reached.
-- Communicates with selenium_integration.PocketOptionSelenium which calls back on results.
+- Waits 0.5s before martingale entry to detect base trade result.
+- Resets trade amounts only on WIN or max martingale.
+- Communicates with selenium_integration.PocketOptionSelenium for trade execution and results.
 """
 
 import time
@@ -28,12 +28,12 @@ import pytz
 
 # -------------------------
 # Timezone conversion import
-# Expect convert_signal_time(entry_time_str, source_tz_str) -> datetime in UTC or None
+# Expect convert_signal_time(entry_time_str, source_tz_str) -> datetime in signal's tz or None
 # -------------------------
 try:
     from core_utils import timezone_convert as convert_signal_time
 except Exception:
-    # fallback simple converter that returns a UTC datetime or None
+    # fallback simple converter returning timezone-aware datetime in signal's tz
     def convert_signal_time(entry_time_str, source_tz_str):
         fmt = "%H:%M"
         try:
@@ -57,23 +57,19 @@ except Exception:
                 except Exception:
                     src = pytz.UTC
 
-            # current time in source tz
             now_src = datetime.now(pytz.utc).astimezone(src)
-
-            # combine with today's date in source tz
             entry_dt = datetime.combine(now_src.date(), entry_dt_naive.time())
             entry_dt = src.localize(entry_dt) if entry_dt.tzinfo is None else entry_dt
 
-            # if entry already passed in source tz, ignore (return None)
+            # ignore past signals
             if entry_dt < now_src:
                 return None
 
-            # convert to UTC and return
-            return entry_dt.astimezone(pytz.UTC)
+            return entry_dt
         except Exception:
             return None
 
-# Import Selenium integration (must exist)
+# Import Selenium integration
 from selenium_integration import PocketOptionSelenium
 
 # Logging
@@ -141,15 +137,14 @@ class TradeManager:
 
         source_tz = signal.get("source", "UTC-3")
 
-        # Convert entry time to UTC datetime
-        entry_utc = convert_signal_time(signal.get('entry_time'), source_tz)
-        if not entry_utc:
+        # Convert entry time to signal's tz datetime
+        entry_dt = convert_signal_time(signal.get('entry_time'), source_tz)
+        if not entry_dt:
             logger.warning(f"[⚠️] Invalid or passed entry_time: {signal.get('entry_time')}. Skipping signal.")
             return
-        # store UTC datetime
-        signal['entry_time'] = entry_utc
+        signal['entry_time'] = entry_dt
 
-        # Convert martingale times to UTC datetimes
+        # Convert martingale times to timezone-aware datetimes
         valid_mg_times = []
         for t in signal.get('martingale_times', []):
             t_conv = convert_signal_time(t, source_tz)
@@ -157,10 +152,10 @@ class TradeManager:
                 valid_mg_times.append(t_conv)
         signal['martingale_times'] = valid_mg_times
 
-        # Schedule direct trade (pass UTC datetime)
-        threading.Thread(target=self.execute_trade, args=(signal['entry_time'], signal, 0), daemon=True).start()
+        # Schedule direct trade
+        threading.Thread(target=self.execute_trade, args=(entry_dt, signal, 0), daemon=True).start()
 
-        # Schedule martingale trades (UTC datetimes)
+        # Schedule martingale trades
         for i, mg in enumerate(signal['martingale_times']):
             level = i + 1
             if level > self.max_martingale:
@@ -171,38 +166,28 @@ class TradeManager:
     # -----------------
     # Execute single trade
     # -----------------
-    def execute_trade(self, entry_time_utc: datetime, signal: dict, martingale_level: int):
+    def execute_trade(self, entry_dt, signal, martingale_level):
         """
-        entry_time_utc: timezone-aware datetime in UTC (as returned by convert_signal_time)
-        signal: original signal dict (currency_pair, direction, timeframe, etc.)
-        martingale_level: 0 for base trade, >0 for martingale
+        entry_dt: timezone-aware datetime in signal's tz
+        signal: original signal dict (currency_pair, direction, timeframe)
+        martingale_level: 0 = base, >0 = martingale
         """
-        jkt_tz = pytz.timezone("Asia/Jakarta")
-        try:
-            # Convert UTC entry time to Jakarta for scheduling and any local interactions
-            entry_dt_jkt = entry_time_utc.astimezone(jkt_tz)
-        except Exception as e:
-            logger.warning(f"[⚠️] Could not convert entry UTC to Jakarta: {e}")
-            return
-
-        # compute delay relative to Jakarta clock (so pyautogui timings and confirm_asset_ready match local expectations)
-        delay = (entry_dt_jkt - datetime.now(jkt_tz)).total_seconds()
+        # wait until entry time
+        delay = (entry_dt - datetime.now(entry_dt.tzinfo)).total_seconds()
         if delay > 0:
             fmt = "%H:%M"
-            logger.info(f"[⏰] Waiting {delay:.1f}s until {entry_dt_jkt.strftime(fmt)} (level {martingale_level}) for {signal['currency_pair']}")
+            logger.info(f"[⏰] Waiting {delay:.1f}s until {entry_dt.strftime(fmt)} (level {martingale_level}) for {signal['currency_pair']}")
             time.sleep(delay)
         else:
-            # if delay <= 0, the entry time has passed (perhaps raced); ignore
-            logger.info(f"[⏹️] Signal entry time {entry_dt_jkt.strftime('%H:%M')} passed. Skipping trade for {signal['currency_pair']}.")
+            logger.info(f"[⏹️] Signal entry time {entry_dt.strftime('%H:%M')} passed. Skipping trade for {signal['currency_pair']}.")
             return
 
         currency = signal['currency_pair']
         direction = signal.get('direction', 'BUY')
         timeframe = signal.get('timeframe', 'M1')
 
-        # Martingale checks
+        # Martingale check
         if martingale_level > 0:
-            # wait a short moment so Selenium can detect base trade result if it happened barely before
             time.sleep(0.5)
             with self.pending_lock:
                 for t in self.pending_trades:
@@ -217,27 +202,22 @@ class TradeManager:
             logger.warning(f"[⚠️] set_timeframe failed: {e}")
 
         # Switch asset until ready
-        # confirm_asset_ready expects a time string previously; provide HH:MM in Jakarta (matches UI clock if needed)
-        fmt = "%H:%M"
-        entry_time_for_ui = entry_dt_jkt.strftime(fmt)
         logger.info(f"[🔥] Switching asset for {currency} until ready or entry passes.")
-        while not self.selenium.confirm_asset_ready(currency, entry_time_for_ui):
-            if datetime.now(jkt_tz) > entry_dt_jkt + timedelta(seconds=1):
+        while not self.selenium.confirm_asset_ready(currency, entry_dt):
+            if datetime.now(entry_dt.tzinfo) > entry_dt + timedelta(seconds=1):
                 logger.info(f"[⏹️] Entry time passed for {currency} — aborting.")
                 return
             pyautogui.keyDown('shift'); pyautogui.press('tab'); pyautogui.keyUp('shift')
             time.sleep(random.randint(5, 9))
 
-        # Place trade
-        # Use UTC entry time for stable id formatting (but any tz-aware datetime works)
-        trade_id = f"{currency}_{entry_time_utc.strftime('%H%M')}_{martingale_level}_{int(time.time()*1000)}"
+        trade_id = f"{currency}_{entry_dt.strftime('%H%M')}_{martingale_level}_{int(time.time()*1000)}"
         logger.info(f"[🎯] READY to place trade {trade_id} — {direction} level {martingale_level}")
 
         with self.pending_lock:
             pending = {
                 'id': trade_id,
                 'currency_pair': currency,
-                'entry_dt': entry_time_utc,   # store UTC datetime
+                'entry_dt': entry_dt,
                 'level': martingale_level,
                 'placed_at': None,
                 'resolved': False,
@@ -262,11 +242,9 @@ class TradeManager:
             logger.error(f"[❌] Error sending trade hotkey for {trade_id}: {e}")
 
         with self.pending_lock:
-            # placed_at stored in Jakarta timezone for consistency with scheduling/display
-            pending['placed_at'] = datetime.now(jkt_tz)
+            pending['placed_at'] = datetime.now(entry_dt.tzinfo)
 
         try:
-            # watch_trade_for_result expects currency and placed_at (tz-aware). Keep same call.
             self.selenium.watch_trade_for_result(currency, pending['placed_at'])
         except Exception:
             pass
@@ -321,11 +299,11 @@ class TradeManager:
     # -----------------
     def _cleanup_pending(self):
         with self.pending_lock:
-            cutoff = datetime.now(pytz.timezone("Asia/Jakarta")) - timedelta(minutes=30)
+            cutoff = datetime.now(pytz.utc) - timedelta(minutes=30)
             self.pending_trades = [t for t in self.pending_trades if (not t['resolved'] or (t['placed_at'] and t['placed_at'] > cutoff))]
 
 # -----------------
 # Global instance
 # -----------------
 trade_manager = TradeManager()
-        
+            
