@@ -80,6 +80,10 @@ COPY core_utils.py /home/dockuser/core_utils.py
 COPY logs.json /home/dockuser/logs.json
 RUN chown dockuser:dockuser /home/dockuser/core_utils.py /home/dockuser/logs.json
 
+# ✅ Copy Selenium integration script
+COPY selenium_integration.py /home/dockuser/selenium_integration.py
+RUN chown dockuser:dockuser /home/dockuser/selenium_integration.py
+
 EXPOSE 5901 6080
 
 USER dockuser
