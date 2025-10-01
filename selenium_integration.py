@@ -17,6 +17,8 @@ import random
 import uuid
 from datetime import datetime, timedelta
 import pytz
+import logging
+
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
@@ -26,7 +28,12 @@ from selenium.webdriver.support import expected_conditions as EC
 import pyautogui
 
 # ---------------------------
-# Credentials (production: replace or use env)
+# Logging Setup
+# ---------------------------
+logger = logging.getLogger(__name__)
+
+# ---------------------------
+# Credentials (replace with env vars in production!)
 # ---------------------------
 EMAIL = "mylivemyfuture@123gmail.com"
 PASSWORD = "AaCcWw3468,"
@@ -72,7 +79,7 @@ class PocketOptionSelenium:
         service = Service("/usr/local/bin/chromedriver")
         driver = webdriver.Chrome(service=service, options=chrome_options)
         driver.get("https://pocketoption.com/en/login/")
-        print("[✅] Chrome started and navigated to login.")
+        logger.info("[✅] Chrome started and navigated to login.")
 
         # Auto-login
         try:
@@ -80,15 +87,17 @@ class PocketOptionSelenium:
             email_field = wait.until(EC.presence_of_element_located((By.NAME, "email")))
             password_field = wait.until(EC.presence_of_element_located((By.NAME, "password")))
 
-            email_field.clear(); email_field.send_keys(EMAIL)
-            password_field.clear(); password_field.send_keys(PASSWORD)
+            email_field.clear()
+            email_field.send_keys(EMAIL)
+            password_field.clear()
+            password_field.send_keys(PASSWORD)
 
             login_button = driver.find_element(By.CSS_SELECTOR, "button[type='submit']")
             login_button.click()
-            print("[🔐] Login submitted.")
-            time.sleep(2)
+            logger.info("[🔐] Login submitted.")
+            time.sleep(3)
         except Exception as e:
-            print(f"[⚠️] Auto-login failed: {e}")
+            logger.warning(f"[⚠️] Auto-login failed: {e}")
         return driver
 
     # -----------------
@@ -113,15 +122,18 @@ class PocketOptionSelenium:
                 current = self.driver.find_element(By.CSS_SELECTOR, ".asset-name-selector")
                 if current.text.strip() == currency_pair:
                     return True
-                current.click(); time.sleep(random.uniform(1,2))
+                current.click()
+                time.sleep(random.uniform(1, 2))
                 search_input = self.driver.find_element(By.CSS_SELECTOR, ".asset-dropdown input")
-                search_input.clear(); search_input.send_keys(currency_pair)
+                search_input.clear()
+                search_input.send_keys(currency_pair)
                 options = self.driver.find_elements(By.CSS_SELECTOR, ".asset-dropdown .option")
                 for opt in options:
                     txt = opt.text.strip().upper().replace("/", "")
                     if txt == currency_pair.upper() or txt == f"{currency_pair} OTC":
-                        opt.click(); time.sleep(0.5)
-                        pyautogui.click(random.randint(400,800), random.randint(200,400))
+                        opt.click()
+                        time.sleep(0.5)
+                        pyautogui.click(random.randint(400, 800), random.randint(200, 400))
                         return True
             except Exception:
                 time.sleep(0.5)
@@ -133,12 +145,14 @@ class PocketOptionSelenium:
                 current = self.driver.find_element(By.CSS_SELECTOR, ".timeframe-selector .current")
                 if current.text.strip().upper() == timeframe.upper():
                     return True
-                current.click(); time.sleep(random.uniform(1,2))
+                current.click()
+                time.sleep(random.uniform(1, 2))
                 options = self.driver.find_elements(By.CSS_SELECTOR, ".timeframe-selector .option")
                 for opt in options:
                     if opt.text.strip().upper() == timeframe.upper():
-                        opt.click(); time.sleep(0.5)
-                        pyautogui.click(random.randint(400,800), random.randint(200,400))
+                        opt.click()
+                        time.sleep(0.5)
+                        pyautogui.click(random.randint(400, 800), random.randint(200, 400))
                         return True
             except Exception:
                 time.sleep(0.5)
@@ -164,7 +178,7 @@ class PocketOptionSelenium:
             time.sleep(0.5)
 
         if not ready and seconds_to_entry <= FAILSAFE_BUFFER:
-            print(f"[⚠️] Signal missed for {asset_name}: Selenium could not prepare in time.")
+            logger.warning(f"[⚠️] Signal missed for {asset_name}: Selenium could not prepare in time.")
             return {"ready": False, "asset": asset_name, "timeframe": timeframe}
 
         return {"ready": ready, "asset": asset_name, "timeframe": timeframe}
@@ -185,6 +199,9 @@ class PocketOptionSelenium:
         except:
             return None
 
+    # -----------------
+    # Global result monitor thread
+    # -----------------
     def start_result_monitor(self):
         def monitor():
             while True:
@@ -192,18 +209,20 @@ class PocketOptionSelenium:
                 if res:
                     try:
                         with self.trade_manager.pending_lock:
-                            pending_currencies = set(
+                            pending_currencies = {
                                 t['currency_pair'] for t in self.trade_manager.pending_trades
                                 if not t['resolved'] and t.get('placed_at')
-                            )
-                    except:
+                            }
+                    except Exception:
                         pending_currencies = set()
+
                     for currency in pending_currencies:
                         try:
                             self.trade_manager.on_trade_result(currency, res)
-                        except:
-                            pass
+                        except Exception as e:
+                            logger.error(f"[❌] Error in result callback: {e}")
                 time.sleep(CHECK_INTERVAL)
+
         self.monitor_thread = threading.Thread(target=monitor, daemon=True)
         self.monitor_thread.start()
 
@@ -218,8 +237,10 @@ class PocketOptionSelenium:
                 if res:
                     try:
                         self.trade_manager.on_trade_result(currency_pair, res)
-                    except:
-                        pass
+                    except Exception as e:
+                        logger.error(f"[❌] Error in watch_trade_for_result: {e}")
                     return
                 time.sleep(0.5)
+
         threading.Thread(target=watch, daemon=True).start()
+        
