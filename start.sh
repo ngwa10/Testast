@@ -6,6 +6,7 @@ set -e
 # -------------------------
 export DISPLAY=:1
 export NO_VNC_HOME=/opt/noVNC
+export VNC_RESOLUTION=${VNC_RESOLUTION:-1280x800}
 
 # -------------------------
 # Start VNC server (passwordless)
@@ -25,6 +26,11 @@ echo "[✅] noVNC started on port 6080"
 sleep 5
 
 # -------------------------
-# Start Python bot
+# Start Python bot in persistent loop
 # -------------------------
-exec python3 -u core.py
+while true; do
+    echo "[ℹ️] Starting bot..."
+    python3 -u core.py
+    echo "[⚠️] Bot exited unexpectedly. Restarting in 5 seconds..."
+    sleep 5
+done
