@@ -1,5 +1,5 @@
 """
-core.py — TradeManager & Core logic (updated)
+core.py — TradeManager & Core logic (updated with debugging)
 
 Notes:
 - Exposes async signal_callback(signal) and command_callback(cmd) for your external telegram_listener.
@@ -183,7 +183,6 @@ class TradeManager:
             quick = self.selenium.detect_trade_result()
             if quick == "WIN":
                 logger.info(f"[✔️] Selenium reported WIN during 0.5s check - skipping martingale level {martingale_level} for {currency}.")
-                # mark scheduled martingale as skipped in pending_trades if needed
                 return
 
         # Register pending trade
@@ -232,7 +231,6 @@ class TradeManager:
             def delayed_increase():
                 wait_sec = random.uniform(10, 30)
                 time.sleep(wait_sec)
-                # Only increase if trade still unresolved (i.e. no immediate win)
                 with self.pending_lock():
                     still_pending = (not pending['resolved'])
                 if still_pending:
@@ -264,9 +262,9 @@ class TradeManager:
         """
         logger.info(f"[📣] Result callback: {currency_pair} -> {result}")
         with self.pending_lock():
-            # find the most recent pending trade with placed_at and not resolved
             pending = None
-            sorted_trades = sorted([t for t in self.pending_trades if t.get('placed_at')], key=lambda x: x['placed_at'] or datetime.max, reverse=True)
+            sorted_trades = sorted([t for t in self.pending_trades if t.get('placed_at')],
+                                   key=lambda x: x['placed_at'] or datetime.max, reverse=True)
             for t in sorted_trades:
                 if t['currency_pair'] == currency_pair and not t['resolved']:
                     pending = t
@@ -276,11 +274,9 @@ class TradeManager:
                 return
             pending['resolved'] = True
             pending['result'] = result
-
-            # how many increases were applied for this currency (persisted)
             increases = self.increase_counts.get(currency_pair, 0)
 
-        # If WIN: revert increases (send Shift+A for each increase), clear increase counter
+        # If WIN: revert increases
         if result == "WIN":
             if increases > 0 and self.hotkey_mode:
                 logger.info(f"[↩️] WIN detected — reverting {increases} increases for {currency_pair}")
@@ -290,7 +286,6 @@ class TradeManager:
                         time.sleep(0.05)
                     except Exception:
                         pass
-            # reset counters and mark any pending higher-level martingales as skipped
             with self.pending_lock():
                 self.increase_counts[currency_pair] = 0
                 for t in self.pending_trades:
@@ -300,7 +295,7 @@ class TradeManager:
             logger.info(f"[✅] Trade {currency_pair} WIN handled — martingale reset.")
             return
 
-        # If LOSS: check if we reached max martingale
+        # If LOSS: check max martingale
         if result == "LOSS":
             increases_done = increases
             if increases_done >= self.max_martingale:
@@ -326,21 +321,50 @@ class TradeManager:
 trade_manager = TradeManager()
 
 # --------------------
-# Exposed async callbacks for external Telegram listener
+# Exposed async callbacks for external Telegram listener with full debugging
 # --------------------
 async def signal_callback(signal: dict, raw_message=None):
     try:
+        logger.info(f"[🐞 DEBUG] Received raw signal: {signal}")
+
+        # Check required keys
+        required_keys = ["currency_pair", "entry_time", "timeframe", "direction", "martingale_times"]
+        for key in required_keys:
+            if key not in signal:
+                logger.warning(f"[⚠️ DEBUG] Signal missing key: {key} | signal={signal}")
+
+        # Type checks
+        entry_time_val = signal.get("entry_time")
+        if not isinstance(entry_time_val, datetime):
+            logger.warning(f"[⚠️ DEBUG] entry_time is not datetime: {entry_time_val} | type={type(entry_time_val)}")
+        elif entry_time_val.tzinfo is None:
+            logger.warning(f"[⚠️ DEBUG] entry_time is naive (no tzinfo): {entry_time_val}")
+
+        # Log martingale_times
+        mg_times = signal.get("martingale_times")
+        if not isinstance(mg_times, list):
+            logger.warning(f"[⚠️ DEBUG] martingale_times not list: {mg_times} | type={type(mg_times)}")
+        else:
+            for idx, dt in enumerate(mg_times):
+                if not isinstance(dt, datetime):
+                    logger.warning(f"[⚠️ DEBUG] martingale_times[{idx}] not datetime: {dt} | type={type(dt)}")
+                elif dt.tzinfo is None:
+                    logger.warning(f"[⚠️ DEBUG] martingale_times[{idx}] is naive: {dt}")
+
+        # Forward to TradeManager
         trade_manager.handle_signal(signal)
-        logger.info("[🤖] Signal forwarded to TradeManager for execution.")
+        logger.info("[🤖 DEBUG] Signal successfully forwarded to TradeManager.")
+
     except Exception as e:
-        logger.error(f"[❌] Failed to forward signal to TradeManager: {e}")
+        logger.exception(f"[❌ DEBUG] Exception in signal_callback while forwarding to TradeManager: {e}")
 
 async def command_callback(cmd: str):
     try:
+        logger.info(f"[🐞 DEBUG] Received raw command: {cmd}")
         trade_manager.handle_command(cmd)
-        logger.info("[💻] Command forwarded to TradeManager.")
+        logger.info("[💻 DEBUG] Command successfully forwarded to TradeManager.")
     except Exception as e:
-        logger.error(f"[❌] Failed to forward command to TradeManager: {e}")
+        logger.exception(f"[❌ DEBUG] Exception in command_callback: {e}")
 
 # --------------------
 # main keep-alive if run directly
@@ -352,4 +376,4 @@ if __name__ == "__main__":
             time.sleep(1)
     except KeyboardInterrupt:
         logger.info("[ℹ️] Shutting down.")
-        
+      
