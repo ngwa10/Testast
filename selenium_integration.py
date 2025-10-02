@@ -1,12 +1,13 @@
 """
-selenium_integration.py — PocketOptionSelenium (headless, Zeabur-ready)
+selenium_integration.py — PocketOptionSelenium (production-ready)
 
 Features:
-- Headless Chrome
-- Auto-login with hardcoded credentials
+- Headless Chrome or persistent session
+- Auto-login (email & password)
 - Asset & timeframe selection with retry
-- Missed signal detection
-- Trade result monitoring and Core callback
+- Missed signal detection (last 20s)
+- Martingale safety logic
+- Trade result monitoring and instant Core notification
 - Balance fetching (real & demo)
 """
 
@@ -15,6 +16,7 @@ import threading
 import random
 import uuid
 from datetime import datetime, timedelta
+import pytz
 import logging
 
 from selenium import webdriver
@@ -30,7 +32,7 @@ from selenium.webdriver.support import expected_conditions as EC
 logger = logging.getLogger(__name__)
 
 # ---------------------------
-# Credentials (hardcoded)
+# Credentials (hardcoded for Zeabur)
 # ---------------------------
 EMAIL = "mylivemyfuture@123gmail.com"
 PASSWORD = "AaCcWw3468,"
@@ -62,11 +64,9 @@ class PocketOptionSelenium:
         chrome_options.add_experimental_option('useAutomationExtension', False)
         chrome_options.add_argument("--start-maximized")
 
-        # Unique session folder to avoid conflicts
         session_id = str(uuid.uuid4())
         chrome_options.add_argument(f"--user-data-dir=/tmp/chrome-user-data-{session_id}")
 
-        # Headless for Zeabur
         if headless:
             chrome_options.add_argument("--headless=new")
 
@@ -81,17 +81,17 @@ class PocketOptionSelenium:
             email_field = wait.until(EC.presence_of_element_located((By.NAME, "email")))
             password_field = wait.until(EC.presence_of_element_located((By.NAME, "password")))
 
-            # Use JS injection for reliability in headless mode
-            driver.execute_script("arguments[0].value = arguments[1];", email_field, EMAIL)
-            driver.execute_script("arguments[0].value = arguments[1];", password_field, PASSWORD)
+            email_field.clear()
+            email_field.send_keys(EMAIL)
+            password_field.clear()
+            password_field.send_keys(PASSWORD)
 
             login_button = driver.find_element(By.CSS_SELECTOR, "button[type='submit']")
-            driver.execute_script("arguments[0].click();", login_button)
+            login_button.click()
             logger.info("[🔐] Login submitted.")
             time.sleep(3)
         except Exception as e:
             logger.warning(f"[⚠️] Auto-login failed: {e}")
-
         return driver
 
     # -----------------
@@ -111,7 +111,7 @@ class PocketOptionSelenium:
     # Asset & timeframe selection
     # -----------------
     def select_asset(self, currency_pair, max_attempts=5):
-        for _ in range(max_attempts):
+        for attempt in range(max_attempts):
             try:
                 current = self.driver.find_element(By.CSS_SELECTOR, ".asset-name-selector")
                 if current.text.strip() == currency_pair:
@@ -126,13 +126,14 @@ class PocketOptionSelenium:
                     txt = opt.text.strip().upper().replace("/", "")
                     if txt == currency_pair.upper() or txt == f"{currency_pair} OTC":
                         opt.click()
+                        time.sleep(0.5)
                         return True
-            except:
+            except Exception:
                 time.sleep(0.5)
         return False
 
     def set_timeframe(self, timeframe="M1", max_attempts=5):
-        for _ in range(max_attempts):
+        for attempt in range(max_attempts):
             try:
                 current = self.driver.find_element(By.CSS_SELECTOR, ".timeframe-selector .current")
                 if current.text.strip().upper() == timeframe.upper():
@@ -143,13 +144,14 @@ class PocketOptionSelenium:
                 for opt in options:
                     if opt.text.strip().upper() == timeframe.upper():
                         opt.click()
+                        time.sleep(0.5)
                         return True
-            except:
+            except Exception:
                 time.sleep(0.5)
         return False
 
     # -----------------
-    # Confirm asset ready
+    # Confirm asset ready (with last 20s check)
     # -----------------
     def confirm_asset_ready(self, asset_name, entry_time_dt, timeframe="M1"):
         now = datetime.now(entry_time_dt.tzinfo)
@@ -174,7 +176,7 @@ class PocketOptionSelenium:
         return {"ready": ready, "asset": asset_name, "timeframe": timeframe}
 
     # -----------------
-    # Detect trade result
+    # Detect trade result instantly
     # -----------------
     def detect_trade_result(self):
         try:
@@ -190,7 +192,7 @@ class PocketOptionSelenium:
             return None
 
     # -----------------
-    # Global result monitor
+    # Global result monitor thread
     # -----------------
     def start_result_monitor(self):
         def monitor():
@@ -203,7 +205,7 @@ class PocketOptionSelenium:
                                 t['currency_pair'] for t in self.trade_manager.pending_trades
                                 if not t['resolved'] and t.get('placed_at')
                             }
-                    except:
+                    except Exception:
                         pending_currencies = set()
 
                     for currency in pending_currencies:
@@ -217,7 +219,7 @@ class PocketOptionSelenium:
         self.monitor_thread.start()
 
     # -----------------
-    # Watch trade for result
+    # Watch trade for result (per trade)
     # -----------------
     def watch_trade_for_result(self, currency_pair, placed_at, timeout=60):
         def watch():
