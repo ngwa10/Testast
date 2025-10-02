@@ -6,7 +6,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     NO_VNC_HOME=/opt/noVNC
 
 # -------------------------
-# Install base packages
+# Install core packages
 # -------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl wget ca-certificates gnupg2 \
@@ -14,8 +14,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tigervnc-standalone-server tigervnc-tools \
     xfce4-session xfce4-panel xfce4-terminal dbus-x11 procps dos2unix \
     python3-tk python3-dev scrot xclip xsel \
-    xvfb \
-    ffmpeg sox libsox-fmt-all \
+    xvfb x11-utils x11vnc pulseaudio alsa-utils \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 # -------------------------
@@ -40,16 +40,7 @@ RUN CHROME_VERSION=$(google-chrome --version | sed 's/[^0-9.]//g' | cut -d. -f1)
 # -------------------------
 # Install Python packages
 # -------------------------
-RUN pip3 install --no-cache-dir \
-    pytz selenium telethon numpy python-dotenv \
-    pyautogui pillow opencv-python pytesseract \
-    sounddevice librosa
-
-# -------------------------
-# Install Tesseract OCR
-# -------------------------
-RUN apt-get update && apt-get install -y tesseract-ocr tesseract-ocr-eng \
-    && rm -rf /var/lib/apt/lists/*
+RUN pip3 install --no-cache-dir pytz selenium telethon numpy python-dotenv pyautogui pillow sounddevice
 
 # -------------------------
 # Install noVNC
