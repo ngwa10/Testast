@@ -1,17 +1,12 @@
 """
-selenium_integration.py — PocketOptionSelenium
+selenium_integration.py — PocketOptionSelenium (refactor)
 
 Notes:
-- Hardcoded EMAIL/PASSWORD here (deployment). Change if needed.
-- chromedriver path: /usr/local/bin/chromedriver (change if different).
-- Uses pyautogui for some clicks (hotkey_mode). Requires DISPLAY (Xvfb / VNC).
-- Behaviors implemented:
-  * select_asset: opens dropdown, waits 2-10s, focuses search, types CADUSD (no slash),
-    waits 2-10s, clicks first result preferring "OTC", random delay 2-10s between actions.
-  * set_timeframe: clicks timeframe dropdown, waits, selects 1M/5M, random delays.
-  * prepare_for_trade: selects asset/timeframe and spawns a monitor for expected result time.
-  * intensive monitoring: starts MONITOR_LEAD_SECONDS before result_dt and polls every INTENSE_POLL_INTERVAL.
-  * logs readiness, receipt of orders, results sent to core.
+- Implements select_asset: open currency dropdown -> search -> paste currency -> click top result.
+- prepare_for_trade returns boolean and launches monitor threads that attempt to attribute result to asset.
+- detect_trade_result_structured returns list of dicts like {'asset': 'EURUSD', 'result': 'WIN', 'raw_text': '...'}
+- start_result_monitor reduces misattribution by matching asset names.
+- Keeps login, screenshot on login, captcha handling as before (best-effort).
 """
 
 import time
@@ -32,7 +27,7 @@ import pyautogui
 
 logger = logging.getLogger(__name__)
 
-# Hardcoded credentials (deployment)
+# Hardcoded credentials (deployment) — consider moving to env vars
 EMAIL = "mylivemyfuture@123gmail.com"
 PASSWORD = "AaCcWw3468,"
 
@@ -52,13 +47,13 @@ if not EMAIL or not PASSWORD:
     raise ValueError("EMAIL or PASSWORD not set.")
 
 class PocketOptionSelenium:
-    def __init__(self, trade_manager, headless=True, hotkey_mode=True):
+    def __init__(self, trade_manager, headless=True, hotkey_mode=True, chromedriver_path="/usr/local/bin/chromedriver"):
         self.trade_manager = trade_manager
         self.headless = headless
         self.hotkey_mode = hotkey_mode
-        self.driver = self.setup_driver(headless)
+        self.driver = self.setup_driver(headless, chromedriver_path)
         self._monitors = {}           # key: (currency, entry_iso) -> monitor info
-        self._monitors_lock = threading.Lock()
+        self._monitors_lock = threading.RLock()
         self._global_monitor_running = False
         self.start_result_monitor()
         logger.info("[🟢] Selenium initialized and ready — waiting for orders from Core.")
@@ -66,7 +61,7 @@ class PocketOptionSelenium:
     # -----------------
     # Setup Chrome
     # -----------------
-    def setup_driver(self, headless=True):
+    def setup_driver(self, headless=True, chromedriver_path="/usr/local/bin/chromedriver"):
         chrome_options = Options()
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
@@ -79,17 +74,25 @@ class PocketOptionSelenium:
         session_id = str(uuid.uuid4())
         chrome_options.add_argument(f"--user-data-dir=/tmp/chrome-user-data-{session_id}")
 
+        # headless handling: optional, may need Xvfb when using pyautogui
         if headless:
-            chrome_options.add_argument("--headless=new")
+            try:
+                chrome_options.add_argument("--headless=new")
+            except Exception:
+                chrome_options.add_argument("--headless")
 
-        service = Service("/usr/local/bin/chromedriver")
-        driver = webdriver.Chrome(service=service, options=chrome_options)
-        driver.get("https://pocketoption.com/en/login/")
-        logger.info("[✅] Chrome started and navigated to login.")
-
-        # Auto-login
         try:
-            wait = WebDriverWait(driver, 30)
+            service = Service(chromedriver_path)
+            driver = webdriver.Chrome(service=service, options=chrome_options)
+            driver.get("https://pocketoption.com/en/login/")
+            logger.info("[✅] Chrome started and navigated to login.")
+        except Exception as e:
+            logger.exception(f"[❌] Could not start Chrome/Chromedriver: {e}")
+            raise
+
+        # Auto-login (best-effort)
+        try:
+            wait = WebDriverWait(driver, 20)
             email_field = wait.until(EC.presence_of_element_located((By.NAME, "email")))
             password_field = wait.until(EC.presence_of_element_located((By.NAME, "password")))
             email_field.clear()
@@ -99,9 +102,18 @@ class PocketOptionSelenium:
             login_button = driver.find_element(By.CSS_SELECTOR, "button[type='submit']")
             login_button.click()
             logger.info("[🔐] Login submitted.")
+            # capture screenshot on login (helpful for debugging captcha)
+            time.sleep(2)
+            try:
+                driver.save_screenshot("login_screenshot.png")
+                logger.info("[📷] Captured login screenshot login_screenshot.png")
+            except Exception:
+                pass
+            # allow possible captcha manual intervention (if running with VNC)
             time.sleep(3)
         except Exception as e:
-            logger.warning(f"[⚠️] Auto-login failed: {e}")
+            logger.warning(f"[⚠️] Auto-login failed or missing fields: {e}")
+
         return driver
 
     # -----------------
@@ -115,126 +127,109 @@ class PocketOptionSelenium:
     # -----------------
     # Select asset: opens dropdown, types pair (no slash), clicks first result (prefer OTC)
     # -----------------
-    def select_asset(self, currency_pair, max_attempts=5):
+    def select_asset(self, currency_pair: str, max_attempts: int = 3) -> bool:
         """
-        currency_pair is normalized e.g. "CADUSD" (no slash).
-        Steps:
-          1) Click asset-name-selector to open dropdown
-          2) pause 2-10s
-          3) focus search input inside dropdown
-          4) type currency_pair (no slash)
-          5) pause 2-10s
-          6) click first result preferring OTC
-          7) pause 2-10s and return True
+        Clicks the currency dropdown, finds the search input, types the pair and clicks the first returned result.
+        Returns True on success, False on failure.
         """
+        normalized_pair = currency_pair.replace("/", "").replace(" ", "").upper()
+        logger.info(f"[🔎] select_asset called for '{currency_pair}' -> normalized '{normalized_pair}'")
         try:
-            for attempt in range(max_attempts):
+            wait = WebDriverWait(self.driver, 8)
+
+            # 1) Click/open the asset dropdown - try multiple selectors
+            dropdown_selectors = [
+                ("css", "button.asset-selector"),
+                ("css", "div.asset-name-selector"),
+                ("css", ".asset-dropdown-opener"),
+                ("xpath", "//button[contains(@class,'asset') and (contains(., 'Assets') or contains(., 'Select'))]"),
+                ("css", ".header-asset-selector"),
+            ]
+            opened = False
+            for kind, sel in dropdown_selectors:
                 try:
-                    # 1) click asset dropdown opener
-                    opener = self.driver.find_element(By.CSS_SELECTOR, ".asset-name-selector")
-                    opener.click()
-                    logger.debug("[🖱️] Clicked asset dropdown opener.")
-                    self._rand_pause()
+                    if kind == "css":
+                        elem = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, sel)))
+                    else:
+                        elem = wait.until(EC.element_to_be_clickable((By.XPATH, sel)))
+                    elem.click()
+                    opened = True
+                    logger.debug(f"[🖱️] Clicked dropdown using selector {sel}")
+                    break
+                except Exception:
+                    continue
+            if not opened:
+                logger.warning("[⚠️] Could not open asset dropdown.")
+                return False
 
-                    # 2) find search input
-                    # try multiple selectors (site may vary)
-                    search_input = None
-                    try:
-                        search_input = self.driver.find_element(By.CSS_SELECTOR, ".asset-dropdown input")
-                    except Exception:
-                        try:
-                            search_input = self.driver.find_element(By.CSS_SELECTOR, "input[data-test='asset-search']")
-                        except Exception:
-                            pass
+            # 2) Find the search input inside the dropdown
+            try:
+                search_input = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "input.asset-search, input[placeholder*='Search'], input[type='search']")))
+            except Exception:
+                # fallback XPath
+                try:
+                    search_input = wait.until(EC.presence_of_element_located((By.XPATH, "//input[contains(@class,'search') or contains(@placeholder,'Search')]")))
+                except Exception:
+                    logger.warning("[⚠️] Search input not found inside asset dropdown.")
+                    return False
 
-                    if not search_input:
-                        logger.debug("[⚠️] Search input not found; retrying...")
-                        time.sleep(0.5)
-                        continue
+            # 3) Type/paste the pair
+            try:
+                search_input.clear()
+                # send as text; clipboard paste can be used as alternative
+                search_input.send_keys(normalized_pair)
+                time.sleep(0.2)
+                logger.debug(f"[🔤] Typed into search input: {normalized_pair}")
+            except Exception as e:
+                logger.warning(f"[⚠️] Failed typing into search input: {e}")
+                return False
 
-                    # 3) type the currency pair without slash
-                    search_term = currency_pair.replace("/", "").replace(" ", "").upper()
-                    search_input.clear()
-                    # send chars with small delay
-                    for ch in search_term:
-                        search_input.send_keys(ch)
-                        time.sleep(0.05)
-                    logger.debug(f"[🔍] Typed search term '{search_term}' into asset search.")
-                    self._rand_pause()
+            # 4) Wait for the first result (we expect it to contain the normalized_pair)
+            try:
+                xpath_fragment = f"contains(translate(., 'abcdefghijklmnopqrstuvwxyz', 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'), '{normalized_pair}')"
+                # many sites wrap options in a div with 'asset' or 'option' class - we search broadly
+                result_xpath = f"//div[{xpath_fragment} and (contains(@class,'asset') or contains(@class,'asset-item') or contains(@class,'option') or contains(@class,'list-item'))]"
+                result_elem = wait.until(EC.element_to_be_clickable((By.XPATH, result_xpath)))
+                txt = result_elem.text.strip().upper()
+                if normalized_pair not in txt:
+                    logger.debug(f"[⚠️] Top result text does not contain '{normalized_pair}': '{txt[:80]}'")
+                # click result (try direct then JS fallback)
+                try:
+                    result_elem.click()
+                except Exception:
+                    self.driver.execute_script("arguments[0].click();", result_elem)
+                logger.info(f"[✅] select_asset succeeded for {currency_pair} (selected: {txt[:80]})")
+                time.sleep(0.7)
+                return True
+            except Exception as e:
+                logger.warning(f"[⚠️] Could not find/click the asset result for '{normalized_pair}': {e}")
+                try:
+                    fn = f"select_asset_fail_{normalized_pair}_{int(time.time())}.png"
+                    self.driver.save_screenshot(fn)
+                    logger.info(f"[ℹ️] Saved screenshot to {fn}")
+                except Exception:
+                    pass
+                return False
 
-                    # 4) find results list and click the first entry (prefer OTC)
-                    options = self.driver.find_elements(By.CSS_SELECTOR, ".asset-dropdown .option")
-                    if not options:
-                        # try alternate selector
-                        options = self.driver.find_elements(By.CSS_SELECTOR, ".asset-list .asset-item")
-                    if not options:
-                        logger.debug("[⚠️] No asset options found after search; retrying...")
-                        time.sleep(0.5)
-                        continue
-
-                    # choose first that contains OTC or first overall
-                    chosen = None
-                    for opt in options:
-                        txt = opt.text.strip().upper()
-                        if "OTC" in txt and (search_term in txt or search_term.replace("/", "") in txt):
-                            chosen = opt
-                            logger.debug(f"[📈] Found OTC entry in options: '{txt[:80]}'")
-                            break
-                    if not chosen:
-                        chosen = options[0]
-                        logger.debug(f"[📈] Choosing first option: '{chosen.text.strip()[:80]}'")
-
-                    # click chosen element
-                    try:
-                        chosen.click()
-                    except Exception:
-                        # fallback: use JS click
-                        self.driver.execute_script("arguments[0].click();", chosen)
-                    logger.debug("[🖱️] Clicked chosen asset option.")
-                    self._rand_pause()
-
-                    # center click to ensure dropdown closed (if hotkey_mode)
-                    if self.hotkey_mode:
-                        # click near center of window/chart area
-                        try:
-                            width = self.driver.execute_script("return window.innerWidth")
-                            height = self.driver.execute_script("return window.innerHeight")
-                            x = int(width * 0.5) + random.randint(-30, 30)
-                            y = int(height * 0.4) + random.randint(-20, 20)
-                            pyautogui.click(x, y)
-                            logger.debug(f"[🖱️] Clicked center area to close asset dropdown at ({x},{y}).")
-                        except Exception:
-                            pass
-                        self._rand_pause(0.6, 1.5)
-
-                    return True
-
-                except Exception as e:
-                    logger.debug(f"[⚠️] select_asset attempt failed: {e}")
-                    time.sleep(0.6)
-            return False
         except Exception as e:
-            logger.error(f"[❌] select_asset fatal error: {e}")
+            logger.exception(f"[❌] Unexpected error in select_asset: {e}")
             return False
 
     # -----------------
     # Set timeframe: open dropdown, wait, pick timeframe (1M/5M)
     # -----------------
-    def set_timeframe(self, timeframe="M1", max_attempts=5):
+    def set_timeframe(self, timeframe="M1", max_attempts=3):
         try:
             for attempt in range(max_attempts):
                 try:
-                    # open timeframe dropdown
-                    tf_opener = self.driver.find_element(By.CSS_SELECTOR, ".timeframe-selector .current")
+                    tf_opener = WebDriverWait(self.driver, 6).until(
+                        EC.element_to_be_clickable((By.CSS_SELECTOR, ".timeframe-selector .current, .timeframe-selector"))
+                    )
                     tf_opener.click()
                     logger.debug("[🖱️] Clicked timeframe dropdown opener.")
                     self._rand_pause()
 
-                    # find timeframe options
-                    options = self.driver.find_elements(By.CSS_SELECTOR, ".timeframe-selector .option")
-                    if not options:
-                        # fallback selectors
-                        options = self.driver.find_elements(By.CSS_SELECTOR, ".timeframe-list .option")
+                    options = self.driver.find_elements(By.CSS_SELECTOR, ".timeframe-selector .option, .timeframe-list .option, .timeframe-item")
                     if not options:
                         logger.debug("[⚠️] No timeframe options found; retrying...")
                         time.sleep(0.4)
@@ -244,13 +239,11 @@ class PocketOptionSelenium:
                     tf_upper = timeframe.upper()
                     for opt in options:
                         txt = opt.text.strip().upper()
-                        # Accept "1M", "1 MIN", "1 MINUTE" etc.
                         if tf_upper in txt or (tf_upper == "M1" and ("1M" in txt or "1 MIN" in txt)) or (tf_upper == "M5" and ("5M" in txt or "5 MIN" in txt)):
                             selected = opt
                             break
 
                     if not selected:
-                        # choose first as fallback
                         selected = options[0]
 
                     try:
@@ -260,20 +253,15 @@ class PocketOptionSelenium:
 
                     logger.debug(f"[🖱️] Selected timeframe option: {selected.text.strip()[:40]}")
                     self._rand_pause()
-
-                    # random click center to close timeframe
-                    if self.hotkey_mode:
-                        try:
-                            width = self.driver.execute_script("return window.innerWidth")
-                            height = self.driver.execute_script("return window.innerHeight")
-                            x = int(width * 0.52) + random.randint(-40, 40)
-                            y = int(height * 0.45) + random.randint(-30, 30)
-                            pyautogui.click(x, y)
-                            logger.debug(f"[🖱️] Clicked center area to close timeframe at ({x},{y}).")
-                        except Exception:
-                            pass
-                        self._rand_pause()
-
+                    # small click to close
+                    try:
+                        width = self.driver.execute_script("return window.innerWidth")
+                        height = self.driver.execute_script("return window.innerHeight")
+                        x = int(width * 0.5)
+                        y = int(height * 0.5)
+                        pyautogui.click(x, y)
+                    except Exception:
+                        pass
                     return True
 
                 except Exception as e:
@@ -281,7 +269,7 @@ class PocketOptionSelenium:
                     time.sleep(0.5)
             return False
         except Exception as e:
-            logger.error(f"[❌] set_timeframe fatal error: {e}")
+            logger.exception(f"[❌] set_timeframe fatal error: {e}")
             return False
 
     # -----------------
@@ -289,15 +277,8 @@ class PocketOptionSelenium:
     # returns True when selection finished (asset+tf) and monitor thread launched
     # -----------------
     def prepare_for_trade(self, currency_pair, entry_dt, timeframe="M1"):
-        """
-        Core calls this before scheduling the actual placement.
-        currency_pair: e.g. "CADUSD" (no slash)
-        entry_dt: tz-aware datetime (entry time)
-        timeframe: "M1" or "M5"
-        """
         try:
             logger.info(f"[📥] Selenium received order from Core: {currency_pair} | Timeframe: {timeframe} | Entry at: {entry_dt.strftime('%H:%M:%S')}")
-            # Perform the UI actions in sequence with randomized pauses
             sel_ok = self.select_asset(currency_pair)
             if not sel_ok:
                 logger.warning(f"[⚠️] select_asset failed for {currency_pair}")
@@ -309,7 +290,7 @@ class PocketOptionSelenium:
             tf_seconds = TIMEFRAME_SECONDS.get(timeframe.upper(), 60)
             expected_result_dt = entry_dt + timedelta(seconds=tf_seconds)
 
-            key = (currency_pair, entry_dt.isoformat())
+            key = (currency_pair.replace("/", "").replace(" ", "").upper(), entry_dt.isoformat())
             with self._monitors_lock:
                 if key in self._monitors:
                     logger.debug(f"[ℹ️] Monitor already exists for {key}")
@@ -320,17 +301,17 @@ class PocketOptionSelenium:
                     self._monitors[key] = {"thread": t, "started_at": datetime.utcnow()}
                     t.start()
 
-            logger.info(f"[✅] Asset {currency_pair} and timeframe {timeframe} selected successfully. Monitor set for result at {expected_result_dt.strftime('%H:%M:%S')}")
-            return True
+            logger.info(f"[✅] Asset {currency_pair} and timeframe {timeframe} selection attempted; monitor set for result at {expected_result_dt.strftime('%H:%M:%S')}")
+            return sel_ok or tf_ok
         except Exception as e:
-            logger.error(f"[❌] prepare_for_trade error: {e}")
+            logger.exception(f"[❌] prepare_for_trade error: {e}")
             return False
 
     # -----------------
     # Internal monitor per expected result
     # -----------------
     def _monitor_for_result(self, currency_pair, entry_dt, result_dt, timeframe):
-        iso_key = (currency_pair, entry_dt.isoformat())
+        iso_key = (currency_pair.replace("/", "").replace(" ", "").upper(), entry_dt.isoformat())
         try:
             logger.debug(f"[🔎] Monitor thread started for {currency_pair} expected result at {result_dt.isoformat()}")
             # Poll lightly until MONITOR_LEAD_SECONDS before result_dt
@@ -339,23 +320,27 @@ class PocketOptionSelenium:
                 seconds_to_result = (result_dt - now).total_seconds()
                 if seconds_to_result <= MONITOR_LEAD_SECONDS:
                     break
-                # sleep a fraction
                 time.sleep(max(0.5, min(2.0, seconds_to_result / 5.0)))
             # intensive poll window (until result_dt + small buffer)
             end_time = result_dt + timedelta(seconds=15)
             logger.info(f"[🔔] Selenium intensive monitoring started for {currency_pair} — checking every {INTENSE_POLL_INTERVAL}s until {end_time.strftime('%H:%M:%S')}")
             while datetime.now(entry_dt.tzinfo) <= end_time:
-                res = self.detect_trade_result()
-                if res:
-                    logger.info(f"[📤] Selenium detected trade result for {currency_pair}: {res}. Sending result to Core.")
-                    try:
-                        self.trade_manager.on_trade_result(currency_pair, res)
-                    except Exception as e:
-                        logger.error(f"[❌] Error notifying core for {currency_pair}: {e}")
-                    break
+                res_list = self.detect_trade_result_structured()
+                if res_list:
+                    # find a matching asset result
+                    for r in res_list:
+                        asset = (r.get("asset") or "").replace("/", "").replace(" ", "").upper()
+                        result = r.get("result")
+                        if asset == currency_pair.replace("/", "").replace(" ", "").upper():
+                            logger.info(f"[📤] Selenium detected trade result for {currency_pair}: {result}. Sending result to Core.")
+                            try:
+                                self.trade_manager.on_trade_result(currency_pair.replace("/", "").replace(" ", "").upper(), result)
+                            except Exception as e:
+                                logger.exception(f"[❌] Error notifying core for {currency_pair}: {e}")
+                            return
                 time.sleep(INTENSE_POLL_INTERVAL)
         except Exception as e:
-            logger.error(f"[❌] Monitor thread error for {currency_pair}: {e}")
+            logger.exception(f"[❌] Monitor thread error for {currency_pair}: {e}")
         finally:
             with self._monitors_lock:
                 if iso_key in self._monitors:
@@ -363,57 +348,73 @@ class PocketOptionSelenium:
             logger.debug(f"[🔚] Monitor thread ended for {currency_pair} entry {entry_dt.isoformat()}")
 
     # -----------------
-    # Parse trade-results in history DOM; returns 'WIN' or 'LOSS' or None
+    # Parse trade-results in history DOM; returns list of structured entries or None
     # -----------------
-    def detect_trade_result(self):
+    def detect_trade_result_structured(self):
         """
-        Scans the trade history for the latest entry result.
-        Heuristics:
-         - text starting with '+' or 'win' => WIN
-         - text equal to '$0' or starting with '0' => LOSS
+        Scans the trade history for recent entries and returns a list of dicts:
+        [{"asset": "EURUSD", "result": "WIN", "raw_text": "...", "timestamp_text": "..."} , ...]
+        Best-effort: selectors may need tuning for the live DOM.
         """
+        out = []
         try:
-            elems = self.driver.find_elements(By.CSS_SELECTOR, ".trade-history .trade-result")
-            for e in elems:
-                txt = e.text.strip()
-                if not txt:
-                    continue
-                if txt.startswith("+") or txt.lower().startswith("win"):
-                    return "WIN"
-                if txt == "$0" or txt.lower().startswith("0"):
-                    return "LOSS"
-            return None
-        except Exception:
-            return None
-
-    # -----------------
-    # Global lightweight monitor (fallback)
-    # -----------------
-    def start_result_monitor(self):
-        if self._global_monitor_running:
-            return
-        self._global_monitor_running = True
-
-        def monitor():
-            while True:
+            # try to find rows that include asset + result
+            # many sites have a trade-history section with items; search broadly
+            rows = []
+            try:
+                rows = self.driver.find_elements(By.CSS_SELECTOR, ".trade-history .trade-row, .trade-history .trade-item, .trade-history .history-item")
+            except Exception:
+                pass
+            if not rows:
+                # broader fallback: any element that contains result-like text
                 try:
-                    res = self.detect_trade_result()
-                    if res:
-                        try:
-                            with self.trade_manager._pending_lock:
-                                pending_currencies = {t['currency_pair'] for t in self.trade_manager.pending_trades if not t['resolved'] and t.get('placed_at')}
-                        except Exception:
-                            pending_currencies = set()
-                        for currency in pending_currencies:
-                            try:
-                                logger.info(f"[📤] Global monitor sending result {res} for {currency} to Core.")
-                                self.trade_manager.on_trade_result(currency, res)
-                            except Exception as e:
-                                logger.error(f"[❌] Error in global monitor callback: {e}")
+                    rows = self.driver.find_elements(By.CSS_SELECTOR, ".trade-history .trade-result, .history-list .item")
                 except Exception:
                     pass
-                time.sleep(CHECK_INTERVAL)
 
-        t = threading.Thread(target=monitor, daemon=True)
-        t.start()
+            for r in rows:
+                try:
+                    txt = r.text.strip()
+                    if not txt:
+                        continue
+                    # attempt to extract asset and result from the row text (heuristic)
+                    # e.g., "EURUSD +$1.00 23:35" or "EUR/USD WIN 23:35"
+                    asset = None
+                    result = None
+                    timestamp_text = None
 
+                    # try to find child elements first
+                    try:
+                        asset_elem = r.find_element(By.CSS_SELECTOR, ".asset-name")
+                        asset = asset_elem.text.strip()
+                    except Exception:
+                        # heuristic: first token of the row maybe asset
+                        parts = txt.split()
+                        if parts:
+                            maybe = parts[0].replace("/", "").upper()
+                            if len(maybe) >= 6:
+                                asset = maybe
+
+                    # find result text candidates
+                    try:
+                        res_elem = r.find_element(By.CSS_SELECTOR, ".trade-result")
+                        raw_result = res_elem.text.strip()
+                    except Exception:
+                        raw_result = txt
+
+                    rr = raw_result.strip()
+                    if rr.startswith("+") or rr.lower().startswith("win") or "+" in rr:
+                        result = "WIN"
+                    elif rr == "$0" or rr.lower().startswith("0") or "loss" in rr.lower() or "-" in rr:
+                        result = "LOSS"
+
+                    # timestamp heuristic: try child .trade-time
+                    try:
+                        ts_elem = r.find_element(By.CSS_SELECTOR, ".trade-time, .time")
+                        timestamp_text = ts_elem.text.strip()
+                    except Exception:
+                        timestamp_text = None
+
+                    if result:
+                        out.append({
+                       
