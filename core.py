@@ -1,12 +1,10 @@
 # core.py
-import threading
 import logging
 import time
 import random
 from datetime import datetime, timedelta
 import pytz
 import pyautogui
-import asyncio
 import json
 
 from selenium_integration import PocketOptionSelenium  # Make sure this exists
@@ -20,14 +18,6 @@ logging.basicConfig(
     datefmt='%H:%M:%S'
 )
 logger = logging.getLogger(__name__)
-
-# =========================
-# Telegram Credentials
-# =========================
-api_id = 29630724
-api_hash = "8e12421a95fd722246e0c0b194fd3e0c"
-bot_token = "8477806088:AAGEXpIAwN5tNQM0hsCGqP-otpLJjPJLmWA"
-TARGET_CHAT_ID = -1003033183667
 
 # =========================
 # Random Log Messages
@@ -93,7 +83,7 @@ class TradeManager:
         self.max_martingale = max_martingale
         self.trading_active = True
         self.pending_trades = []
-        self.pending_lock = threading.Lock()
+        self.pending_lock = None
         self.increase_counts = {}
         self.hotkey_mode = hotkey_mode
 
@@ -127,7 +117,8 @@ class TradeManager:
         if delay <= 0:
             logger.info(f"[⏹️] Signal entry time {entry_dt.strftime('%H:%M')} passed. Skipping trade.")
             return
-        threading.Timer(delay, self.execute_trade, args=(entry_dt, signal, martingale_level)).start()
+        from threading import Timer
+        Timer(delay, self.execute_trade, args=(entry_dt, signal, martingale_level)).start()
 
     # -----------------
     # Handle Signal
@@ -216,73 +207,6 @@ async def command_callback(cmd: str):
     logger.info(f"[💻] Command processed: {cmd}")
 
 # =========================
-# Telegram Listener (parse signals)
-# =========================
-import re
-from telethon import TelegramClient, events
-
-client = TelegramClient('bot_session', api_id, api_hash)
-
-def parse_signal(message_text):
-    result = {
-        "currency_pair": None,
-        "direction": None,
-        "entry_time": None,
-        "timeframe": "M1",
-        "martingale_times": [],
-        "source": "OTC-3"
-    }
-
-    pair_match = re.search(r'([A-Z]{3}/[A-Z]{3})', message_text)
-    if pair_match:
-        result['currency_pair'] = pair_match.group(0)
-    if re.search(r'(BUY|CALL|🟩|🔼)', message_text, re.IGNORECASE):
-        result['direction'] = 'BUY'
-    elif re.search(r'(SELL|PUT|🟥|🔽)', message_text, re.IGNORECASE):
-        result['direction'] = 'SELL'
-
-    entry_match = re.search(r'(\d{2}:\d{2})', message_text)
-    if entry_match:
-        result['entry_time'] = entry_match.group(1)
-    
-    # default martingale
-    if result['entry_time']:
-        fmt = "%H:%M"
-        dt = datetime.strptime(result['entry_time'], fmt)
-        result['martingale_times'] = [(dt + timedelta(minutes=1)).strftime("%H:%M"),
-                                      (dt + timedelta(minutes=2)).strftime("%H:%M")]
-
-    if not result['currency_pair'] or not result['direction'] or not result['entry_time']:
-        return None
-    return result
-
-# =========================
-# Start Telegram Listener with asyncio loop in thread
-# =========================
-def start_telegram_listener(signal_cb, cmd_cb):
-    @client.on(events.NewMessage(chats=TARGET_CHAT_ID))
-    async def handler(event):
-        text = event.message.message
-        if text.startswith("/start") or text.startswith("/stop"):
-            await cmd_cb(text)
-            return
-        signal = parse_signal(text)
-        if signal:
-            await signal_cb(signal)
-
-    client.start(bot_token=bot_token)
-    client.run_until_disconnected()
-
-def run_telegram_thread():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    start_telegram_listener(signal_callback, command_callback)
-
-listener_thread = threading.Thread(target=run_telegram_thread, daemon=True)
-listener_thread.start()
-logger.info("[ℹ️] Telegram listener thread started.")
-
-# =========================
 # Keep bot alive
 # =========================
 logger.info("[ℹ️] Core bot running and ready for signals.")
@@ -291,4 +215,3 @@ try:
         time.sleep(1)
 except KeyboardInterrupt:
     logger.info("[ℹ️] Bot shutting down.")
-    
