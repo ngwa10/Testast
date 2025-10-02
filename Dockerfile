@@ -49,10 +49,11 @@ RUN git clone --depth 1 --branch v1.4.0 https://github.com/novnc/noVNC.git ${NO_
     && chmod +x ${NO_VNC_HOME}/utils/websockify/run
 
 # -------------------------
-# Copy start.sh and convert (as root)
+# Copy scripts
 # -------------------------
-COPY start.sh /usr/local/bin/start.sh
-RUN dos2unix /usr/local/bin/start.sh && chmod +x /usr/local/bin/start.sh
+COPY start.sh start_debug.sh /usr/local/bin/
+RUN dos2unix /usr/local/bin/start.sh /usr/local/bin/start_debug.sh \
+    && chmod +x /usr/local/bin/start.sh /usr/local/bin/start_debug.sh
 
 # -------------------------
 # Create non-root user
@@ -66,19 +67,15 @@ RUN useradd -m -s /bin/bash -u 1000 dockuser \
 COPY .env core.py selenium_integration.py telegram_listener.py telegram_callbacks.py core_utils.py logs.json debug_core.py /home/dockuser/
 RUN chown -R dockuser:dockuser /home/dockuser
 
-# -------------------------
-# Set working directory
-# -------------------------
 USER dockuser
 WORKDIR /home/dockuser
 
 # -------------------------
-# Expose ports
+# Expose ports for VNC
 # -------------------------
 EXPOSE 5901 6080
 
 # -------------------------
-# Run debug_core.py on container start
+# Default entrypoint
 # -------------------------
 ENTRYPOINT ["/usr/local/bin/start.sh"]
-
