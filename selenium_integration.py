@@ -3,10 +3,9 @@ selenium_integration.py — PocketOptionSelenium (production-ready)
 
 Features:
 - Headless Chrome or persistent session
-- Auto-login (email & password)
+- Auto-login (hardcoded credentials)
 - Asset & timeframe selection with retry
 - Missed signal detection (last 20s)
-- Martingale safety logic
 - Trade result monitoring and instant Core notification
 - Balance fetching (real & demo)
 """
@@ -32,7 +31,7 @@ from selenium.webdriver.support import expected_conditions as EC
 logger = logging.getLogger(__name__)
 
 # ---------------------------
-# Credentials (hardcoded for Zeabur)
+# Credentials (hardcoded for private deployment)
 # ---------------------------
 EMAIL = "mylivemyfuture@123gmail.com"
 PASSWORD = "AaCcWw3468,"
@@ -44,9 +43,10 @@ FAILSAFE_BUFFER = 20   # seconds before entry to consider missed
 # PocketOptionSelenium Class
 # ---------------------------
 class PocketOptionSelenium:
-    def __init__(self, trade_manager, headless=True):
+    def __init__(self, trade_manager, headless=True, hotkey_mode=False):
         self.trade_manager = trade_manager
         self.headless = headless
+        self.hotkey_mode = hotkey_mode
         self.driver = self.setup_driver(headless)
         self.monitor_thread = None
         self.start_result_monitor()
@@ -235,3 +235,4 @@ class PocketOptionSelenium:
                 time.sleep(0.5)
 
         threading.Thread(target=watch, daemon=True).start()
+        
