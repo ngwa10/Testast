@@ -6,7 +6,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     NO_VNC_HOME=/opt/noVNC
 
 # -------------------------
-# Install basic packages
+# Install packages
 # -------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl wget ca-certificates gnupg2 \
@@ -25,7 +25,7 @@ RUN curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor
     && rm -rf /var/lib/apt/lists/*
 
 # -------------------------
-# Install ChromeDriver matching Chrome version
+# ChromeDriver
 # -------------------------
 RUN CHROME_VERSION=$(google-chrome --version | sed 's/[^0-9.]//g' | cut -d. -f1) \
     && LATEST_URL=$(curl -s "https://googlechromelabs.github.io/chrome-for-testing/LATEST_RELEASE_${CHROME_VERSION}") \
@@ -48,24 +48,25 @@ RUN git clone --depth 1 --branch v1.4.0 https://github.com/novnc/noVNC.git ${NO_
     && chmod +x ${NO_VNC_HOME}/utils/websockify/run
 
 # -------------------------
-# Create non-root user
-# -------------------------
-RUN useradd -m -s /bin/bash -u 1000 dockuser \
-    && mkdir -p /home/dockuser/.vnc /home/dockuser/chrome-profile \
-    && chown -R dockuser:dockuser /home/dockuser
-
-USER dockuser
-WORKDIR /home/dockuser
-
-# -------------------------
-# Copy bot files
+# Copy start.sh and convert (as root)
 # -------------------------
 COPY start.sh /usr/local/bin/start.sh
 RUN dos2unix /usr/local/bin/start.sh && chmod +x /usr/local/bin/start.sh
 
+# -------------------------
+# Create non-root user
+# -------------------------
+RUN useradd -m -s /bin/bash -u 1000 dockuser \
+    && mkdir -p /home/dockuser/.vnc /home/dockuser/chrome-profile
+
+# -------------------------
+# Copy bot files (change ownership)
+# -------------------------
 COPY .env core.py selenium_integration.py telegram_listener.py telegram_callbacks.py core_utils.py logs.json /home/dockuser/
-RUN chown dockuser:dockuser /home/dockuser/.env /home/dockuser/core.py /home/dockuser/selenium_integration.py \
-    /home/dockuser/telegram_listener.py /home/dockuser/telegram_callbacks.py /home/dockuser/core_utils.py /home/dockuser/logs.json
+RUN chown -R dockuser:dockuser /home/dockuser
+
+USER dockuser
+WORKDIR /home/dockuser
 
 EXPOSE 5901 6080
 
