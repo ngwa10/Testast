@@ -3,20 +3,21 @@ selenium_integration.py — PocketOptionSelenium (production-ready)
 
 Features:
 - Headless Chrome or persistent session
-- Auto-login (hardcoded credentials)
+- Auto-login (email & password)
 - Asset & timeframe selection with retry
 - Missed signal detection (last 20s)
+- Martingale safety logic
 - Trade result monitoring and instant Core notification
 - Balance fetching (real & demo)
+- Optional hotkey mode (PyAutoGUI)
 """
 
 import time
 import threading
 import random
 import uuid
-from datetime import datetime, timedelta
-import pytz
 import logging
+from datetime import datetime, timedelta
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -25,13 +26,15 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
+import pyautogui
+
 # ---------------------------
 # Logging Setup
 # ---------------------------
 logger = logging.getLogger(__name__)
 
 # ---------------------------
-# Credentials (hardcoded for private deployment)
+# Credentials (hardcoded for deployment)
 # ---------------------------
 EMAIL = "mylivemyfuture@123gmail.com"
 PASSWORD = "AaCcWw3468,"
@@ -39,11 +42,16 @@ PASSWORD = "AaCcWw3468,"
 CHECK_INTERVAL = 0.5  # seconds
 FAILSAFE_BUFFER = 20   # seconds before entry to consider missed
 
+pyautogui.FAILSAFE = False
+
+if not EMAIL or not PASSWORD:
+    raise ValueError("EMAIL or PASSWORD not set.")
+
 # ---------------------------
 # PocketOptionSelenium Class
 # ---------------------------
 class PocketOptionSelenium:
-    def __init__(self, trade_manager, headless=True, hotkey_mode=False):
+    def __init__(self, trade_manager, headless=True, hotkey_mode=True):
         self.trade_manager = trade_manager
         self.headless = headless
         self.hotkey_mode = hotkey_mode
@@ -127,6 +135,9 @@ class PocketOptionSelenium:
                     if txt == currency_pair.upper() or txt == f"{currency_pair} OTC":
                         opt.click()
                         time.sleep(0.5)
+                        # Only click if hotkey_mode, else skip GUI
+                        if self.hotkey_mode:
+                            pyautogui.click(random.randint(400, 800), random.randint(200, 400))
                         return True
             except Exception:
                 time.sleep(0.5)
@@ -145,6 +156,8 @@ class PocketOptionSelenium:
                     if opt.text.strip().upper() == timeframe.upper():
                         opt.click()
                         time.sleep(0.5)
+                        if self.hotkey_mode:
+                            pyautogui.click(random.randint(400, 800), random.randint(200, 400))
                         return True
             except Exception:
                 time.sleep(0.5)
@@ -235,4 +248,3 @@ class PocketOptionSelenium:
                 time.sleep(0.5)
 
         threading.Thread(target=watch, daemon=True).start()
-        
