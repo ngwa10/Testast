@@ -1,11 +1,11 @@
 """
-core.py — TradeManager & Core logic (updated)
+core.py — TradeManager & Core logic (refactor)
 
 Notes:
 - Exposes async signal_callback(signal) and command_callback(cmd) for your external telegram_listener.
-- Expects signals to include tz-aware datetimes for entry_time and martingale_times.
-- Instantiates PocketOptionSelenium (starts Chrome). Make sure chromedriver path in selenium_integration.py is correct.
-- hotkey_mode toggles pyautogui usage (requires Xvfb/VNC/display).
+- Expects signals to include tz-aware datetimes for entry_time and martingale_times (your utils do that).
+- Instantiates PocketOptionSelenium (starts Chrome).
+- Maintains hotkey behavior (pyautogui) and martingale logic from original file, but more defensive.
 """
 
 import logging
@@ -13,6 +13,7 @@ import time
 import random
 import threading
 import json
+import traceback
 from datetime import datetime, timedelta
 import pytz
 import pyautogui
@@ -55,13 +56,17 @@ class TradeManager:
 
         self.trading_active = True
         self.pending_trades = []            # list of trade dicts
-        self._pending_lock = threading.Lock()
+        self._pending_lock = threading.RLock()
         self.increase_counts = {}          # currency -> number of increases applied for this "position"
 
         # initialize selenium integration (starts Chrome & monitors)
-        self.selenium = PocketOptionSelenium(self, headless=False, hotkey_mode=hotkey_mode)
-        logger.info("[ℹ️] TradeManager initialized | base_amount: %.2f, max_martingale: %d, hotkey_mode=%s" %
-                    (self.base_amount, self.max_martingale, self.hotkey_mode))
+        try:
+            self.selenium = PocketOptionSelenium(self, headless=False, hotkey_mode=hotkey_mode)
+            logger.info("[ℹ️] TradeManager initialized | base_amount: %.2f, max_martingale: %d, hotkey_mode=%s" %
+                        (self.base_amount, self.max_martingale, self.hotkey_mode))
+        except Exception as e:
+            logger.exception("[❌] Failed to initialize PocketOptionSelenium.")
+            raise
 
     # -----------------
     # context manager for pending lock
@@ -76,6 +81,21 @@ class TradeManager:
             def __exit__(self, exc_type, exc, tb):
                 self.lock.release()
         return _Ctx(self._pending_lock)
+
+    # -----------------
+    # helpers to safely access increase_counts
+    # -----------------
+    def _get_increases(self, currency):
+        with self.pending_lock():
+            return self.increase_counts.get(currency, 0)
+
+    def _add_increase(self, currency, n=1):
+        with self.pending_lock():
+            self.increase_counts[currency] = self.increase_counts.get(currency, 0) + n
+
+    def _reset_increases(self, currency):
+        with self.pending_lock():
+            self.increase_counts[currency] = 0
 
     # -----------------
     # called by telegram command
@@ -94,10 +114,22 @@ class TradeManager:
             logger.info(f"[ℹ️] Unknown command: {cmd}")
 
     # -----------------
-    # schedule trade
+    # schedule trade (signature stable)
     # -----------------
     def schedule_trade(self, entry_dt, signal, martingale_level):
-        # entry_dt is timezone-aware
+        """
+        entry_dt: tz-aware datetime (exact requested entry)
+        signal: original dict (must contain currency_pair, timeframe, direction)
+        martingale_level: 0 for base, >0 for martingale step
+        """
+        if not isinstance(entry_dt, datetime):
+            logger.warning("[⚠️] schedule_trade expects datetime for entry_dt.")
+            return
+
+        if entry_dt.tzinfo is None or entry_dt.utcoffset() is None:
+            logger.warning("[⚠️] schedule_trade requires tz-aware datetime.")
+            return
+
         now = datetime.now(entry_dt.tzinfo)
         delay = (entry_dt - now).total_seconds()
         if delay <= 0:
@@ -106,7 +138,7 @@ class TradeManager:
         t = threading.Timer(delay, self.execute_trade, args=(entry_dt, signal, martingale_level))
         t.daemon = True
         t.start()
-        logger.info(f"[🗓️] Scheduled trade {signal['currency_pair']} level {martingale_level} at {entry_dt.strftime('%H:%M:%S')}")
+        logger.info(f"[🗓️] Scheduled trade {signal.get('currency_pair')} level {martingale_level} at {entry_dt.strftime('%H:%M:%S')}")
 
     # -----------------
     # handle incoming signal
@@ -120,36 +152,73 @@ class TradeManager:
          - timeframe ("M1" or "M5")
          - direction ("BUY" or "SELL")
         """
+        # defensive validation
+        if not isinstance(signal, dict):
+            logger.warning("[⚠️] handle_signal expects a dict. Ignoring.")
+            return
+
         if not self.trading_active:
             logger.info("[⏸️] Trading paused. Ignoring signal.")
             return
 
         logger.info(f"[📡] Received signal: {signal} | {random_log()}")
 
+        # validate entry_time
         entry_val = signal.get("entry_time")
-        if not entry_val or not isinstance(entry_val, datetime):
-            logger.warning("[⚠️] signal.entry_time must be a timezone-aware datetime. Skipping.")
+        if not isinstance(entry_val, datetime):
+            logger.warning("[⚠️] signal.entry_time must be a datetime instance. Skipping.")
             return
-
+        if entry_val.tzinfo is None or entry_val.utcoffset() is None:
+            logger.warning("[⚠️] signal.entry_time must be timezone-aware (include tzinfo). Skipping.")
+            return
         entry_dt = entry_val
         signal['entry_time'] = entry_dt
 
         # normalize martingale times
         mg_times = signal.get("martingale_times", []) or []
-        signal['martingale_times'] = mg_times
+        cleaned_mg = []
+        for mg in mg_times:
+            if isinstance(mg, datetime) and mg.tzinfo is not None:
+                cleaned_mg.append(mg)
+            else:
+                logger.warning(f"[⚠️] Ignoring invalid martingale time: {mg}")
+        signal['martingale_times'] = cleaned_mg
 
         # Normalize currency format: remove slash if present and uppercase
         raw_pair = signal.get('currency_pair', "")
+        if not isinstance(raw_pair, str) or not raw_pair.strip():
+            logger.warning("[⚠️] signal.currency_pair missing or invalid. Skipping.")
+            return
         norm_pair = raw_pair.replace("/", "").replace(" ", "").upper()
         signal['currency_pair'] = norm_pair
 
-        timeframe = signal.get('timeframe', 'M1').upper()
+        timeframe = (signal.get('timeframe') or 'M1').upper()
+        if timeframe not in ("M1", "M5"):
+            logger.warning(f"[⚠️] timeframe '{timeframe}' not recognized, defaulting to M1")
+            timeframe = "M1"
+            signal['timeframe'] = timeframe
 
-        # Inform selenium to prepare for base and martingale entries (blocking prepare)
-        logger.info(f"[🛰️] Asking Selenium to prepare asset/timeframe for base and martingales for {norm_pair}")
-        prepared_base = self.selenium.prepare_for_trade(norm_pair, entry_dt, timeframe)
-        if not prepared_base:
-            logger.warning(f"[⚠️] Selenium failed to fully prepare for base trade {norm_pair}/{timeframe}. (Proceeding anyway)")
+        direction = (signal.get('direction') or 'BUY').upper()
+        if direction not in ("BUY", "SELL"):
+            logger.warning(f"[⚠️] Unknown direction '{direction}', defaulting to BUY")
+            direction = "BUY"
+            signal['direction'] = direction
+
+        # Inform selenium to prepare for base and martingales (defensive)
+        try:
+            logger.info(f"[🛰️] Asking Selenium to prepare asset/timeframe for base and martingales for {norm_pair}")
+            prepared_base = False
+            try:
+                prepared_base = self.selenium.prepare_for_trade(norm_pair, entry_dt, timeframe)
+            except Exception as e:
+                logger.warning(f"[⚠️] Selenium.prepare_for_trade raised: {e}")
+                logger.debug("", exc_info=True)
+
+            if not prepared_base:
+                logger.warning(f"[⚠️] Selenium failed to fully prepare for base trade {norm_pair}/{timeframe}. (Proceeding anyway)")
+        except Exception as e:
+            logger.exception(f"[❌] Unexpected error while preparing trade: {e}")
+            return
 
         # Prepare martingales as well (fire-and-forget prepares)
         for mg_dt in signal['martingale_times']:
@@ -172,7 +241,7 @@ class TradeManager:
     # -----------------
     def execute_trade(self, entry_dt, signal, martingale_level):
         currency = signal['currency_pair']
-        direction = signal.get('direction', 'BUY')
+        direction = signal.get('direction', 'BUY').upper()
         timeframe = signal.get('timeframe', 'M1')
         trade_id = f"{currency}_{entry_dt.strftime('%H%M%S')}_{martingale_level}_{int(time.time()*1000)}"
         logger.info(f"[🎯] READY to place trade {trade_id} — {direction} level {martingale_level}")
@@ -180,11 +249,16 @@ class TradeManager:
         # If martingale level > 0 we must wait 0.5s before actually entering to confirm selenium hasn't detected a WIN
         if martingale_level > 0:
             time.sleep(0.5)
-            quick = self.selenium.detect_trade_result()
-            if quick == "WIN":
-                logger.info(f"[✔️] Selenium reported WIN during 0.5s check - skipping martingale level {martingale_level} for {currency}.")
-                # mark scheduled martingale as skipped in pending_trades if needed
-                return
+            quick_results = self.selenium.detect_trade_result_structured()
+            # quick_results is a list of dicts or None
+            if quick_results:
+                # check if any recent result indicates WIN for this currency
+                for r in quick_results:
+                    asset = r.get("asset", "").replace("/", "").replace(" ", "").upper()
+                    result = r.get("result")
+                    if asset == currency and result == "WIN":
+                        logger.info(f"[✔️] Selenium reported WIN during 0.5s check - skipping martingale level {martingale_level} for {currency}.")
+                        return
 
         # Register pending trade
         with self.pending_lock():
@@ -211,7 +285,7 @@ class TradeManager:
             except Exception as e:
                 logger.warning(f"[⚠️] Failed to send martingale increase hotkey: {e}")
 
-        # Place trade hotkey
+        # Place trade hotkey (Core retains actual placement behavior)
         try:
             if self.hotkey_mode:
                 if direction.upper() == 'BUY':
@@ -232,7 +306,6 @@ class TradeManager:
             def delayed_increase():
                 wait_sec = random.uniform(10, 30)
                 time.sleep(wait_sec)
-                # Only increase if trade still unresolved (i.e. no immediate win)
                 with self.pending_lock():
                     still_pending = (not pending['resolved'])
                 if still_pending:
@@ -246,7 +319,7 @@ class TradeManager:
                         logger.warning(f"[⚠️] Failed delayed increase: {e}")
             threading.Thread(target=delayed_increase, daemon=True).start()
 
-        # Ensure Selenium is watching this trade (it should have prepared earlier)
+        # Ensure Selenium is watching this trade (monitor should have been prepared earlier)
         try:
             self.selenium.watch_trade_for_result(currency, pending['placed_at'], timeframe=timeframe, timeout=90)
             logger.info(f"[👀] Selenium instructed to watch trade {trade_id}")
@@ -264,7 +337,7 @@ class TradeManager:
         """
         logger.info(f"[📣] Result callback: {currency_pair} -> {result}")
         with self.pending_lock():
-            # find the most recent pending trade with placed_at and not resolved
+            # find the most recent pending trade with placed_at and not resolved for this currency
             pending = None
             sorted_trades = sorted([t for t in self.pending_trades if t.get('placed_at')], key=lambda x: x['placed_at'] or datetime.max, reverse=True)
             for t in sorted_trades:
@@ -320,8 +393,23 @@ class TradeManager:
                 logger.info(f"[↪️] LOSS detected for {currency_pair}. Waiting for scheduled martingale (if any).")
                 return
 
+    # -----------------
+    # Shutdown logic
+    # -----------------
+    def shutdown(self):
+        logger.info("[ℹ️] TradeManager shutting down.")
+        try:
+            self.trading_active = False
+            if hasattr(self, 'selenium') and self.selenium:
+                try:
+                    self.selenium.shutdown()
+                except Exception:
+                    logger.exception("[⚠️] Error shutting down selenium.")
+        except Exception:
+            logger.exception("[❌] TradeManager shutdown failed.")
+
 # --------------------
-# instantiate global trade_manager
+# instantiate global trade_manager (single instance)
 # --------------------
 trade_manager = TradeManager()
 
@@ -334,6 +422,7 @@ async def signal_callback(signal: dict, raw_message=None):
         logger.info("[🤖] Signal forwarded to TradeManager for execution.")
     except Exception as e:
         logger.error(f"[❌] Failed to forward signal to TradeManager: {e}")
+        logger.error(traceback.format_exc())
 
 async def command_callback(cmd: str):
     try:
@@ -341,6 +430,7 @@ async def command_callback(cmd: str):
         logger.info("[💻] Command forwarded to TradeManager.")
     except Exception as e:
         logger.error(f"[❌] Failed to forward command to TradeManager: {e}")
+        logger.error(traceback.format_exc())
 
 # --------------------
 # main keep-alive if run directly
@@ -352,4 +442,8 @@ if __name__ == "__main__":
             time.sleep(1)
     except KeyboardInterrupt:
         logger.info("[ℹ️] Shutting down.")
-                 
+        try:
+            trade_manager.shutdown()
+        except Exception:
+            pass
+  
