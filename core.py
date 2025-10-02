@@ -65,15 +65,19 @@ def convert_signal_time(entry_time_val, source_tz_str):
 # TradeManager
 # -------------------------
 class TradeManager:
-    def __init__(self, base_amount=1.0, max_martingale=3):
+    def __init__(self, base_amount=1.0, max_martingale=3, hotkey_mode=True):
         self.base_amount = base_amount
         self.max_martingale = max_martingale
         self.trading_active = True
         self.pending_trades = []
         self.pending_lock = threading.Lock()
         self.increase_counts = {}
-        self.selenium = PocketOptionSelenium(self, headless=True)
-        logger.info(f"TradeManager initialized | base_amount: {base_amount}, max_martingale: {max_martingale}")
+        self.hotkey_mode = hotkey_mode
+
+        pyautogui.FAILSAFE = False if hotkey_mode else True
+
+        self.selenium = PocketOptionSelenium(self, headless=not hotkey_mode)
+        logger.info(f"TradeManager initialized | base_amount: {base_amount}, max_martingale: {max_martingale}, hotkey_mode={hotkey_mode}")
 
     # -----------------
     # Handle commands
@@ -185,24 +189,23 @@ class TradeManager:
             }
             self.pending_trades.append(pending)
 
-        # Martingale increase
-        try:
-            if martingale_level > 0:
-                pyautogui.keyDown('shift'); pyautogui.press('d'); pyautogui.keyUp('shift')
-                with self.pending_lock:
-                    pending['increase_count'] += 1
-                    self.increase_counts[currency] = self.increase_counts.get(currency, 0) + 1
-        except Exception as e:
-            logger.warning(f"[⚠️] PyAutoGUI martingale increase failed: {e}")
+        # Execute trade via hotkeys if enabled
+        if self.hotkey_mode:
+            try:
+                # Martingale increase
+                if martingale_level > 0:
+                    pyautogui.keyDown('shift'); pyautogui.press('d'); pyautogui.keyUp('shift')
+                    with self.pending_lock:
+                        pending['increase_count'] += 1
+                        self.increase_counts[currency] = self.increase_counts.get(currency, 0) + 1
 
-        # Fire trade hotkey
-        try:
-            if direction.upper() == 'BUY':
-                pyautogui.keyDown('shift'); pyautogui.press('w'); pyautogui.keyUp('shift')
-            else:
-                pyautogui.keyDown('shift'); pyautogui.press('s'); pyautogui.keyUp('shift')
-        except Exception as e:
-            logger.error(f"[❌] Error sending trade hotkey for {trade_id}: {e}")
+                # Trade hotkey
+                if direction.upper() == 'BUY':
+                    pyautogui.keyDown('shift'); pyautogui.press('w'); pyautogui.keyUp('shift')
+                else:
+                    pyautogui.keyDown('shift'); pyautogui.press('s'); pyautogui.keyUp('shift')
+            except Exception as e:
+                logger.error(f"[❌] Hotkey execution failed for {trade_id}: {e}")
 
         with self.pending_lock:
             pending['placed_at'] = datetime.now(entry_dt.tzinfo)
@@ -229,7 +232,7 @@ class TradeManager:
             pending['result'] = result
 
         # Handle WIN / LOSS
-        if result == 'WIN':
+        if result == 'WIN' and self.hotkey_mode:
             with self.pending_lock:
                 incs = self.increase_counts.get(currency_pair, 0)
                 for _ in range(incs):
@@ -238,11 +241,12 @@ class TradeManager:
                     except:
                         pass
                 self.increase_counts[currency_pair] = 0
+                # Mark unresolved trades as skipped after win
                 for t in self.pending_trades:
                     if t['currency_pair'] == currency_pair and not t['resolved']:
                         t['resolved'] = True
                         t['result'] = 'SKIPPED_AFTER_WIN'
-        elif result == 'LOSS':
+        elif result == 'LOSS' and self.hotkey_mode:
             with self.pending_lock:
                 increases_done = self.increase_counts.get(currency_pair, 0)
             if increases_done >= self.max_martingale:
@@ -258,5 +262,5 @@ class TradeManager:
 # -------------------------
 # Instantiate global TradeManager
 # -------------------------
-trade_manager = TradeManager()
+trade_manager = TradeManager(hotkey_mode=True)
         
