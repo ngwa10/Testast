@@ -6,6 +6,8 @@ import json
 from datetime import datetime, timedelta
 import pytz
 import pyautogui
+import os
+import sys
 
 from selenium_integration import PocketOptionSelenium
 
@@ -19,6 +21,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# -------------------------
+# Load random log messages
+# -------------------------
 try:
     with open("logs.json", "r", encoding="utf-8") as f:
         LOG_MESSAGES = json.load(f)
@@ -68,35 +73,26 @@ class TradeManager:
     def __init__(self, base_amount=1.0, max_martingale=3, hotkey_mode=True):
         self.base_amount = base_amount
         self.max_martingale = max_martingale
+        self.hotkey_mode = hotkey_mode
         self.trading_active = True
         self.pending_trades = []
         self.pending_lock = threading.Lock()
         self.increase_counts = {}
-        self.hotkey_mode = hotkey_mode
-        self.selenium = PocketOptionSelenium(self, headless=False, hotkey_mode=hotkey_mode)
+
+        # Set PyAutoGUI failsafe off for headless
         pyautogui.FAILSAFE = False
+
+        # Initialize Selenium
+        try:
+            self.selenium = PocketOptionSelenium(self, headless=not hotkey_mode)
+        except Exception as e:
+            logger.error(f"[❌] Selenium init failed: {e}")
+            sys.exit(1)
+
         logger.info(f"TradeManager initialized | base_amount: {base_amount}, max_martingale: {max_martingale}, hotkey_mode={hotkey_mode}")
 
     # -----------------
-    # Hotkey helper
-    # -----------------
-    def send_hotkey(self, direction_or_amount):
-        if not self.hotkey_mode:
-            return
-        try:
-            if direction_or_amount.upper() == "BUY":
-                pyautogui.keyDown('shift'); pyautogui.press('w'); pyautogui.keyUp('shift')
-            elif direction_or_amount.upper() == "SELL":
-                pyautogui.keyDown('shift'); pyautogui.press('s'); pyautogui.keyUp('shift')
-            elif direction_or_amount.upper() == "INCREASE":
-                pyautogui.keyDown('shift'); pyautogui.press('d'); pyautogui.keyUp('shift')
-            elif direction_or_amount.upper() == "DECREASE":
-                pyautogui.keyDown('shift'); pyautogui.press('a'); pyautogui.keyUp('shift')
-        except Exception as e:
-            logger.warning(f"[⚠️] Hotkey failed ({direction_or_amount}): {e}")
-
-    # -----------------
-    # Command handler
+    # Handle commands
     # -----------------
     def handle_command(self, cmd: str):
         cmd = cmd.strip().lower()
@@ -122,7 +118,7 @@ class TradeManager:
         threading.Timer(delay, self.execute_trade, args=(entry_dt, signal, martingale_level)).start()
 
     # -----------------
-    # Handle incoming signal
+    # Signal entrypoint
     # -----------------
     def handle_signal(self, signal: dict):
         if not self.trading_active:
@@ -132,6 +128,7 @@ class TradeManager:
         logger.info(f"[📡] Received signal: {signal} | {random_log()}")
         source_tz = signal.get("source", "UTC-3")
 
+        # Convert entry time
         entry_dt = convert_signal_time(signal.get('entry_time'), source_tz)
         if not entry_dt:
             logger.warning(f"[⚠️] Invalid or passed entry_time: {signal.get('entry_time')}. Skipping signal.")
@@ -158,7 +155,7 @@ class TradeManager:
             self.schedule_trade(mg, signal, level)
 
     # -----------------
-    # Execute a trade
+    # Execute a single trade
     # -----------------
     def execute_trade(self, entry_dt, signal, martingale_level):
         currency = signal['currency_pair']
@@ -173,7 +170,7 @@ class TradeManager:
                         logger.info(f"[⏹️] Base trade WIN — skipping martingale level {martingale_level}.")
                         return
 
-        # Selenium readiness
+        # Selenium readiness (with retry)
         ready_info = {"ready": False}
         for _ in range(3):
             try:
@@ -204,21 +201,33 @@ class TradeManager:
             }
             self.pending_trades.append(pending)
 
-        # Martingale increase
-        if martingale_level > 0:
-            self.send_hotkey("INCREASE")
-            with self.pending_lock:
-                pending['increase_count'] += 1
-                self.increase_counts[currency] = self.increase_counts.get(currency, 0) + 1
+        # Fire hotkeys only if hotkey_mode
+        if self.hotkey_mode:
+            try:
+                # Martingale increase
+                if martingale_level > 0:
+                    pyautogui.keyDown('shift'); pyautogui.press('d'); pyautogui.keyUp('shift')
+                    with self.pending_lock:
+                        pending['increase_count'] += 1
+                        self.increase_counts[currency] = self.increase_counts.get(currency, 0) + 1
 
-        # Fire trade hotkey
-        self.send_hotkey(direction)
+                # Trade hotkey
+                if direction.upper() == 'BUY':
+                    pyautogui.keyDown('shift'); pyautogui.press('w'); pyautogui.keyUp('shift')
+                else:
+                    pyautogui.keyDown('shift'); pyautogui.press('s'); pyautogui.keyUp('shift')
+            except Exception as e:
+                logger.error(f"[❌] Hotkey failed for {trade_id}: {e}")
 
         with self.pending_lock:
             pending['placed_at'] = datetime.now(entry_dt.tzinfo)
 
-        # Watch trade result
-        self.selenium.watch_trade_for_result(currency, pending['placed_at'])
+        # Watch trade result via Selenium
+        try:
+            self.selenium.watch_trade_for_result(currency, pending['placed_at'])
+        except Exception as e:
+            logger.warning(f"[⚠️] watch_trade_for_result failed: {e}")
+
         logger.info(f"[📝] Trade placed: {trade_id} — awaiting result. {random_log()}")
 
     # -----------------
@@ -238,29 +247,33 @@ class TradeManager:
             pending['resolved'] = True
             pending['result'] = result
 
-        # Handle WIN
-        if result == 'WIN':
-            with self.pending_lock:
-                incs = self.increase_counts.get(currency_pair, 0)
-                for _ in range(incs):
-                    self.send_hotkey("DECREASE")
-                self.increase_counts[currency_pair] = 0
-                for t in self.pending_trades:
-                    if t['currency_pair'] == currency_pair and not t['resolved']:
-                        t['resolved'] = True
-                        t['result'] = 'SKIPPED_AFTER_WIN'
-        elif result == 'LOSS':
-            with self.pending_lock:
-                increases_done = self.increase_counts.get(currency_pair, 0)
-            if increases_done >= self.max_martingale:
+        # Handle WIN / LOSS hotkey adjustments
+        if self.hotkey_mode:
+            if result == 'WIN':
                 with self.pending_lock:
                     incs = self.increase_counts.get(currency_pair, 0)
                     for _ in range(incs):
-                        self.send_hotkey("DECREASE")
+                        try:
+                            pyautogui.keyDown('shift'); pyautogui.press('a'); pyautogui.keyUp('shift'); time.sleep(0.05)
+                        except:
+                            pass
+                    self.increase_counts[currency_pair] = 0
+            elif result == 'LOSS':
+                with self.pending_lock:
+                    incs = self.increase_counts.get(currency_pair, 0)
+                    for _ in range(incs):
+                        try:
+                            pyautogui.keyDown('shift'); pyautogui.press('a'); pyautogui.keyUp('shift'); time.sleep(0.05)
+                        except:
+                            pass
                     self.increase_counts[currency_pair] = 0
 
 # -------------------------
 # Instantiate global TradeManager
 # -------------------------
-trade_manager = TradeManager(base_amount=1.0, max_martingale=3, hotkey_mode=True)
+if __name__ == "__main__":
+    # Delay startup to ensure DISPLAY / VNC ready
+    time.sleep(3)
+    trade_manager = TradeManager(base_amount=1.0, max_martingale=3, hotkey_mode=True)
+    logger.info("[ℹ️] Bot started and ready for signals.")
         
