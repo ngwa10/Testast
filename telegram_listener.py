@@ -177,4 +177,24 @@ def start_telegram_listener(signal_callback, command_callback):
         client.run_until_disconnected()
     except Exception as e:
         log_error(f"[❌] Telegram listener failed: {e}")
-        
+
+# =========================
+# Entry Point
+# =========================
+if __name__ == "__main__":
+    log_info("[🚀] Telegram listener script started.")
+
+    try:
+        # ✅ Import callbacks from telegram_callbacks.py
+        from telegram_callbacks import signal_callback, command_callback
+    except ImportError as e:
+        log_error(f"[❌] Failed to import telegram_callbacks: {e}")
+        raise
+
+    # ✅ Start the listener (this keeps the process alive)
+    try:
+        start_telegram_listener(signal_callback, command_callback)
+    except Exception as e:
+        log_error(f"[❌] Telegram listener crashed: {e}")
+        raise
+                             
