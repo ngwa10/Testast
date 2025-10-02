@@ -3,11 +3,13 @@ import threading
 import logging
 import time
 import random
-import pytz
 from datetime import datetime, timedelta
-import re
+import pytz
 import pyautogui
-from telethon import TelegramClient, events
+import asyncio
+import json
+
+from selenium_integration import PocketOptionSelenium  # Make sure this exists
 
 # =========================
 # Logging Setup
@@ -20,17 +22,15 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # =========================
-# HARD-CODED TELEGRAM CREDENTIALS
+# Telegram Credentials
 # =========================
 api_id = 29630724
 api_hash = "8e12421a95fd722246e0c0b194fd3e0c"
 bot_token = "8477806088:AAGEXpIAwN5tNQM0hsCGqP-otpLJjPJLmWA"
 TARGET_CHAT_ID = -1003033183667
 
-client = TelegramClient('bot_session', api_id, api_hash)
-
 # =========================
-# Random log messages
+# Random Log Messages
 # =========================
 try:
     with open("logs.json", "r", encoding="utf-8") as f:
@@ -45,7 +45,7 @@ def random_log():
     return random.choice(LOG_MESSAGES) if LOG_MESSAGES else ""
 
 # =========================
-# Timezone conversion helper
+# Timezone Conversion Helper
 # =========================
 def timezone_convert(entry_time_val, source_tz_str):
     try:
@@ -64,6 +64,7 @@ def timezone_convert(entry_time_val, source_tz_str):
                 src_tz = pytz.timezone(source_tz_str)
             except:
                 src_tz = pytz.UTC
+
         now_src = datetime.now(pytz.utc).astimezone(src_tz)
 
         if isinstance(entry_time_val, datetime):
@@ -84,7 +85,7 @@ def timezone_convert(entry_time_val, source_tz_str):
         return None
 
 # =========================
-# TradeManager Class
+# TradeManager
 # =========================
 class TradeManager:
     def __init__(self, base_amount=1.0, max_martingale=3, hotkey_mode=True):
@@ -98,12 +99,12 @@ class TradeManager:
 
         pyautogui.FAILSAFE = False
 
-        # Placeholder for Selenium integration
-        self.selenium = None
+        # Initialize Selenium
+        self.selenium = PocketOptionSelenium(self, headless=False)
         logger.info(f"TradeManager initialized | base_amount: {base_amount}, max_martingale: {max_martingale}, hotkey_mode={hotkey_mode}")
 
     # -----------------
-    # Command Handling
+    # Handle commands
     # -----------------
     def handle_command(self, cmd: str):
         cmd = cmd.strip().lower()
@@ -138,6 +139,7 @@ class TradeManager:
 
         logger.info(f"[📡] Received signal: {signal} | {random_log()}")
         source_tz = signal.get("source", "UTC-3")
+
         entry_dt = timezone_convert(signal.get('entry_time'), source_tz)
         if not entry_dt:
             logger.warning(f"[⚠️] Invalid or passed entry_time: {signal.get('entry_time')}. Skipping signal.")
@@ -164,13 +166,35 @@ class TradeManager:
             self.schedule_trade(mg, signal, level)
 
     # -----------------
-    # Execute Trade (dummy hotkeys for demo)
+    # Execute Trade
     # -----------------
     def execute_trade(self, entry_dt, signal, martingale_level):
         currency = signal['currency_pair']
         direction = signal.get('direction', 'BUY')
         trade_id = f"{currency}_{entry_dt.strftime('%H%M')}_{martingale_level}_{int(time.time()*1000)}"
-        logger.info(f"[🎯] Executing trade {trade_id} — {direction} level {martingale_level} | {random_log()}")
+
+        logger.info(f"[🎯] READY to place trade {trade_id} — {direction} level {martingale_level} | {random_log()}")
+
+        # Martingale hotkey
+        if self.hotkey_mode and martingale_level > 0:
+            try:
+                pyautogui.keyDown('shift'); pyautogui.press('d'); pyautogui.keyUp('shift')
+            except Exception as e:
+                logger.warning(f"[⚠️] Failed martingale increase hotkey: {e}")
+
+        # Trade hotkeys
+        if self.hotkey_mode:
+            try:
+                if direction.upper() == 'BUY':
+                    pyautogui.keyDown('shift'); pyautogui.press('w'); pyautogui.keyUp('shift')
+                else:
+                    pyautogui.keyDown('shift'); pyautogui.press('s'); pyautogui.keyUp('shift')
+            except Exception as e:
+                logger.error(f"[❌] Hotkey trade failed: {e}")
+
+        # Watch trade with Selenium
+        if self.selenium:
+            self.selenium.watch_trade_for_result(currency, datetime.now(entry_dt.tzinfo))
 
 # =========================
 # Instantiate TradeManager
@@ -178,18 +202,26 @@ class TradeManager:
 trade_manager = TradeManager()
 
 # =========================
-# Telegram Listener
+# Telegram Callbacks
 # =========================
 async def signal_callback(signal: dict, raw_message=None):
     try:
         trade_manager.handle_signal(signal)
-        logger.info("[🤖] Signal forwarded to TradeManager for execution.")
+        logger.info("[🤖] Signal forwarded to TradeManager.")
     except Exception as e:
         logger.error(f"[❌] Failed to forward signal: {e}")
 
 async def command_callback(cmd: str):
     trade_manager.handle_command(cmd)
     logger.info(f"[💻] Command processed: {cmd}")
+
+# =========================
+# Telegram Listener (parse signals)
+# =========================
+import re
+from telethon import TelegramClient, events
+
+client = TelegramClient('bot_session', api_id, api_hash)
 
 def parse_signal(message_text):
     result = {
@@ -201,7 +233,6 @@ def parse_signal(message_text):
         "source": "OTC-3"
     }
 
-    # Detect currency and direction
     pair_match = re.search(r'([A-Z]{3}/[A-Z]{3})', message_text)
     if pair_match:
         result['currency_pair'] = pair_match.group(0)
@@ -210,24 +241,25 @@ def parse_signal(message_text):
     elif re.search(r'(SELL|PUT|🟥|🔽)', message_text, re.IGNORECASE):
         result['direction'] = 'SELL'
 
-    # Entry time
     entry_match = re.search(r'(\d{2}:\d{2})', message_text)
     if entry_match:
         result['entry_time'] = entry_match.group(1)
-
-    # Default martingale
+    
+    # default martingale
     if result['entry_time']:
         fmt = "%H:%M"
         dt = datetime.strptime(result['entry_time'], fmt)
-        result['martingale_times'] = [ (dt + timedelta(minutes=1)).strftime("%H:%M"), (dt + timedelta(minutes=2)).strftime("%H:%M")]
+        result['martingale_times'] = [(dt + timedelta(minutes=1)).strftime("%H:%M"),
+                                      (dt + timedelta(minutes=2)).strftime("%H:%M")]
 
     if not result['currency_pair'] or not result['direction'] or not result['entry_time']:
         return None
     return result
 
+# =========================
+# Start Telegram Listener with asyncio loop in thread
+# =========================
 def start_telegram_listener(signal_cb, cmd_cb):
-    logger.info("[🔌] Starting Telegram listener...")
-
     @client.on(events.NewMessage(chats=TARGET_CHAT_ID))
     async def handler(event):
         text = event.message.message
@@ -241,10 +273,12 @@ def start_telegram_listener(signal_cb, cmd_cb):
     client.start(bot_token=bot_token)
     client.run_until_disconnected()
 
-# =========================
-# Run Telegram listener in a separate thread
-# =========================
-listener_thread = threading.Thread(target=lambda: start_telegram_listener(signal_callback, command_callback), daemon=True)
+def run_telegram_thread():
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    start_telegram_listener(signal_callback, command_callback)
+
+listener_thread = threading.Thread(target=run_telegram_thread, daemon=True)
 listener_thread.start()
 logger.info("[ℹ️] Telegram listener thread started.")
 
@@ -257,4 +291,4 @@ try:
         time.sleep(1)
 except KeyboardInterrupt:
     logger.info("[ℹ️] Bot shutting down.")
-            
+    
