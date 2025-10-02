@@ -8,16 +8,13 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # -------------------------
 # Install packages
 # -------------------------
-# -------------------------
-# Install packages
-# -------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl wget ca-certificates gnupg2 \
     python3 python3-pip git unzip \
     tigervnc-standalone-server tigervnc-tools \
     xfce4-session xfce4-panel xfce4-terminal dbus-x11 procps dos2unix \
     python3-tk python3-dev scrot xclip xsel \
-    xvfb \   # <-- add xvfb here
+    xvfb \
     && rm -rf /var/lib/apt/lists/*
 
 # -------------------------
@@ -69,10 +66,18 @@ RUN useradd -m -s /bin/bash -u 1000 dockuser \
 COPY .env core.py selenium_integration.py telegram_listener.py telegram_callbacks.py core_utils.py logs.json debug_core.py /home/dockuser/
 RUN chown -R dockuser:dockuser /home/dockuser
 
+# -------------------------
+# Set working directory
+# -------------------------
 USER dockuser
 WORKDIR /home/dockuser
 
+# -------------------------
+# Expose ports
+# -------------------------
 EXPOSE 5901 6080
 
+# -------------------------
+# Run debug_core.py on container start
+# -------------------------
 ENTRYPOINT ["python3", "debug_core.py"]
-
