@@ -1,8 +1,8 @@
 #!/bin/bash
 echo "[INFO] Starting virtual display (Xvfb)..."
-Xvfb :1 -screen 0 1280x800x24 &
+Xvfb :1 -screen 0 1280x800x24 -ac &
 
-# wait a moment to ensure Xvfb is ready
+# wait for Xvfb to be ready
 sleep 2
 
 export DISPLAY=:1
