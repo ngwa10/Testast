@@ -1,13 +1,11 @@
 """
-core.py — TradeManager & Core logic
+core.py — TradeManager & Core logic (updated)
 
-- Maintains TradeManager with martingale and hotkey behaviors
-- Exposes async signal_callback(signal) and command_callback(cmd) for the Telegram listener to call
-- Uses PocketOptionSelenium from selenium_integration.py
-- Core waits for Selenium confirmation before preparing to place trades
-- On base trade: place hotkey at entry time, then after random 10-30s send increase hotkey once
-- On martingale: before placing, wait 0.5s to confirm Selenium hasn't reported a WIN; if still LOSS, increase and place immediately
-- on_trade_result handles WIN/LOSS and applies decrease hotkeys to reset increases when appropriate
+Notes:
+- Exposes async signal_callback(signal) and command_callback(cmd) for your external telegram_listener.
+- Expects signals to include tz-aware datetimes for entry_time and martingale_times.
+- Instantiates PocketOptionSelenium (starts Chrome). Make sure chromedriver path in selenium_integration.py is correct.
+- hotkey_mode toggles pyautogui usage (requires Xvfb/VNC/display).
 """
 
 import logging
@@ -24,7 +22,9 @@ from selenium_integration import PocketOptionSelenium
 # --------------------
 # Logging
 # --------------------
-logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(levelname)s: %(message)s', datefmt='%H:%M:%S')
+logging.basicConfig(level=logging.INFO,
+                    format='[%(asctime)s] %(levelname)s: %(message)s',
+                    datefmt='%H:%M:%S')
 logger = logging.getLogger(__name__)
 
 # --------------------
@@ -54,14 +54,28 @@ class TradeManager:
         self.hotkey_mode = hotkey_mode
 
         self.trading_active = True
-        self.pending_trades = []  # list of trade dicts
-        self.pending_lock = threading.Lock()
-        self.increase_counts = {}  # currency -> number of increases applied for this "position"
+        self.pending_trades = []            # list of trade dicts
+        self._pending_lock = threading.Lock()
+        self.increase_counts = {}          # currency -> number of increases applied for this "position"
 
-        # initialize selenium integration
+        # initialize selenium integration (starts Chrome & monitors)
         self.selenium = PocketOptionSelenium(self, headless=False, hotkey_mode=hotkey_mode)
         logger.info("[ℹ️] TradeManager initialized | base_amount: %.2f, max_martingale: %d, hotkey_mode=%s" %
                     (self.base_amount, self.max_martingale, self.hotkey_mode))
+
+    # -----------------
+    # context manager for pending lock
+    # -----------------
+    def pending_lock(self):
+        class _Ctx:
+            def __init__(self, lock):
+                self.lock = lock
+            def __enter__(self):
+                self.lock.acquire()
+                return self.lock
+            def __exit__(self, exc_type, exc, tb):
+                self.lock.release()
+        return _Ctx(self._pending_lock)
 
     # -----------------
     # called by telegram command
@@ -98,37 +112,51 @@ class TradeManager:
     # handle incoming signal
     # -----------------
     def handle_signal(self, signal: dict):
+        """
+        Expects: signal dict with keys:
+         - currency_pair (e.g. "EUR/USD" or "EURUSD")
+         - entry_time (tz-aware datetime)
+         - martingale_times (list of tz-aware datetimes)
+         - timeframe ("M1" or "M5")
+         - direction ("BUY" or "SELL")
+        """
         if not self.trading_active:
             logger.info("[⏸️] Trading paused. Ignoring signal.")
             return
 
         logger.info(f"[📡] Received signal: {signal} | {random_log()}")
-        # signal expected to contain:
-        # currency_pair, direction, entry_time (timezone-aware or string), timeframe (M1/M5), martingale_times (list)
-        source_tz = signal.get("source", "UTC-3")
-        entry_val = signal.get("entry_time")
 
-        # if entry_time is a string, assume it's already converted by telegram_listener or core_utils
-        if isinstance(entry_val, str):
-            # try parsing as HH:MM in same tz as source; assume core_utils / telegram handled conversion
-            logger.warning("[⚠️] Received string entry_time; expecting tz-aware datetime. Ensure telegram_listener uses core timezone conversion.")
+        entry_val = signal.get("entry_time")
+        if not entry_val or not isinstance(entry_val, datetime):
+            logger.warning("[⚠️] signal.entry_time must be a timezone-aware datetime. Skipping.")
             return
 
-        entry_dt = entry_val  # assume tz-aware datetime
+        entry_dt = entry_val
         signal['entry_time'] = entry_dt
 
-        # normalize martingale times: should be list of tz-aware datetimes
-        mg_times = signal.get("martingale_times", [])
+        # normalize martingale times
+        mg_times = signal.get("martingale_times", []) or []
         signal['martingale_times'] = mg_times
 
-        # Inform selenium to prepare for base and martingale entries
-        # Prepare base trade
-        prepared = self.selenium.prepare_for_trade(signal['currency_pair'], entry_dt, signal.get('timeframe', 'M1'))
-        if not prepared:
-            logger.warning(f"[⚠️] Selenium failed to prepare asset {signal['currency_pair']} for base trade. Will still attempt, but risk missing UI.")
-        # Prepare martingales as well
+        # Normalize currency format: remove slash if present and uppercase
+        raw_pair = signal.get('currency_pair', "")
+        norm_pair = raw_pair.replace("/", "").replace(" ", "").upper()
+        signal['currency_pair'] = norm_pair
+
+        timeframe = signal.get('timeframe', 'M1').upper()
+
+        # Inform selenium to prepare for base and martingale entries (blocking prepare)
+        logger.info(f"[🛰️] Asking Selenium to prepare asset/timeframe for base and martingales for {norm_pair}")
+        prepared_base = self.selenium.prepare_for_trade(norm_pair, entry_dt, timeframe)
+        if not prepared_base:
+            logger.warning(f"[⚠️] Selenium failed to fully prepare for base trade {norm_pair}/{timeframe}. (Proceeding anyway)")
+
+        # Prepare martingales as well (fire-and-forget prepares)
         for mg_dt in signal['martingale_times']:
-            self.selenium.prepare_for_trade(signal['currency_pair'], mg_dt, signal.get('timeframe', 'M1'))
+            try:
+                self.selenium.prepare_for_trade(norm_pair, mg_dt, timeframe)
+            except Exception as e:
+                logger.warning(f"[⚠️] Selenium prepare_for_trade failed for martingale time {mg_dt}: {e}")
 
         # Schedule base and martingale trades
         self.schedule_trade(entry_dt, signal, 0)
@@ -149,14 +177,13 @@ class TradeManager:
         trade_id = f"{currency}_{entry_dt.strftime('%H%M%S')}_{martingale_level}_{int(time.time()*1000)}"
         logger.info(f"[🎯] READY to place trade {trade_id} — {direction} level {martingale_level}")
 
-        # If martingale level > 0 we must wait 0.5s before actually entering to confirm selenium hasn't detected
-        # a WIN from the prior trade.
+        # If martingale level > 0 we must wait 0.5s before actually entering to confirm selenium hasn't detected a WIN
         if martingale_level > 0:
             time.sleep(0.5)
-            # Ask selenium for immediate detection
             quick = self.selenium.detect_trade_result()
             if quick == "WIN":
                 logger.info(f"[✔️] Selenium reported WIN during 0.5s check - skipping martingale level {martingale_level} for {currency}.")
+                # mark scheduled martingale as skipped in pending_trades if needed
                 return
 
         # Register pending trade
@@ -220,9 +247,8 @@ class TradeManager:
             threading.Thread(target=delayed_increase, daemon=True).start()
 
         # Ensure Selenium is watching this trade (it should have prepared earlier)
-        # Start a watch as well (non-blocking)
         try:
-            self.selenium.watch_trade_for_result(currency, pending['placed_at'], timeout=90)
+            self.selenium.watch_trade_for_result(currency, pending['placed_at'], timeframe=timeframe, timeout=90)
             logger.info(f"[👀] Selenium instructed to watch trade {trade_id}")
         except Exception as e:
             logger.warning(f"[⚠️] Selenium watch_trade_for_result failed: {e}")
@@ -233,14 +259,13 @@ class TradeManager:
     def on_trade_result(self, currency_pair, result):
         """
         Called from selenium_integration (Selenium threads) when a WIN/LOSS is detected.
-        This updates pending_trades, performs decrease hotkeys on WIN/reset when appropriate,
+        Updates pending_trades, performs decrease hotkeys on WIN/reset when appropriate,
         and logs everything. Core stops trading only when receives WIN or reaches max martingale.
         """
         logger.info(f"[📣] Result callback: {currency_pair} -> {result}")
         with self.pending_lock():
             # find the most recent pending trade with placed_at and not resolved
             pending = None
-            # sort by placed_at descending
             sorted_trades = sorted([t for t in self.pending_trades if t.get('placed_at')], key=lambda x: x['placed_at'] or datetime.max, reverse=True)
             for t in sorted_trades:
                 if t['currency_pair'] == currency_pair and not t['resolved']:
@@ -277,9 +302,7 @@ class TradeManager:
 
         # If LOSS: check if we reached max martingale
         if result == "LOSS":
-            # determine how many martingales already done for this currency (increase count gives count of increases)
             increases_done = increases
-            # if increases_done >= max_martingale then revert increases and reset
             if increases_done >= self.max_martingale:
                 logger.info(f"[⚠️] LOSS at max martingale for {currency_pair}. Resetting increases.")
                 if self.hotkey_mode:
@@ -294,23 +317,8 @@ class TradeManager:
                 logger.info(f"[🔁] Reset after reaching max martingale for {currency_pair}")
                 return
             else:
-                # Not at max yet — core will attempt the next martingale when its scheduled time occurs.
                 logger.info(f"[↪️] LOSS detected for {currency_pair}. Waiting for scheduled martingale (if any).")
-                # nothing else to do here — when the scheduled martingale arrives execute_trade will increase & place it
                 return
-
-    # helper to use pending_lock as contextmanager easily
-    def pending_lock(self):
-        # alias to use in with statement
-        class _Ctx:
-            def __init__(self, lock):
-                self.lock = lock
-            def __enter__(self):
-                self.lock.acquire()
-                return self.lock
-            def __exit__(self, exc_type, exc, tb):
-                self.lock.release()
-        return _Ctx(self.pending_lock)
 
 # --------------------
 # instantiate global trade_manager
@@ -330,7 +338,7 @@ async def signal_callback(signal: dict, raw_message=None):
 async def command_callback(cmd: str):
     try:
         trade_manager.handle_command(cmd)
-        logger.info(f"[💻] Command forwarded to TradeManager.")
+        logger.info("[💻] Command forwarded to TradeManager.")
     except Exception as e:
         logger.error(f"[❌] Failed to forward command to TradeManager: {e}")
 
