@@ -1,13 +1,17 @@
+"""
+core.py — Fully integrated trading bot core
+"""
+
 import time
 import threading
 import random
 import logging
-import json
-from datetime import datetime, timedelta
-import pytz
+from datetime import datetime
 import pyautogui
 
 from selenium_integration import PocketOptionSelenium
+from core_utils import timezone_convert, get_random_log_message
+from telegram_listener import start_telegram_listener, signal_callback, command_callback
 
 # -------------------------
 # Logging
@@ -18,48 +22,6 @@ logging.basicConfig(
     datefmt='%H:%M:%S'
 )
 logger = logging.getLogger(__name__)
-
-try:
-    with open("logs.json", "r", encoding="utf-8") as f:
-        LOG_MESSAGES = json.load(f)
-except Exception:
-    LOG_MESSAGES = [
-        "Precision is warming up. Desmond is watching.",
-        "Desmond's bot is on duty — targets locked.",
-    ]
-
-def random_log():
-    return random.choice(LOG_MESSAGES) if LOG_MESSAGES else ""
-
-# -------------------------
-# Timezone conversion helper
-# -------------------------
-def convert_signal_time(entry_time_val, source_tz_str):
-    if isinstance(entry_time_val, datetime):
-        return entry_time_val
-    fmt = "%H:%M"
-    try:
-        entry_dt_naive = datetime.strptime(entry_time_val, fmt)
-        tz_lower = source_tz_str.lower().strip()
-        if tz_lower == "cameroon":
-            src = pytz.timezone("Africa/Douala")
-        elif tz_lower == "utc-4":
-            src = pytz.FixedOffset(-240)
-        elif tz_lower == "utc-3":
-            src = pytz.FixedOffset(-180)
-        else:
-            try:
-                src = pytz.timezone(source_tz_str)
-            except:
-                src = pytz.UTC
-        now_src = datetime.now(pytz.utc).astimezone(src)
-        entry_dt = datetime.combine(now_src.date(), entry_dt_naive.time())
-        entry_dt = src.localize(entry_dt) if entry_dt.tzinfo is None else entry_dt
-        if entry_dt < now_src:
-            return None
-        return entry_dt
-    except Exception:
-        return None
 
 # -------------------------
 # TradeManager
@@ -114,11 +76,11 @@ class TradeManager:
             logger.info("[⏸️] Trading paused. Ignoring signal.")
             return
 
-        logger.info(f"[📡] Received signal: {signal} | {random_log()}")
+        logger.info(f"[📡] Received signal: {signal} | {get_random_log_message([])}")
         source_tz = signal.get("source", "UTC-3")
 
         # Convert entry time
-        entry_dt = convert_signal_time(signal.get('entry_time'), source_tz)
+        entry_dt = timezone_convert(signal.get('entry_time'), source_tz)
         if not entry_dt:
             logger.warning(f"[⚠️] Invalid or passed entry_time: {signal.get('entry_time')}. Skipping signal.")
             return
@@ -127,7 +89,7 @@ class TradeManager:
         # Convert martingale times
         valid_mg_times = []
         for t in signal.get('martingale_times', []):
-            t_conv = convert_signal_time(t, source_tz)
+            t_conv = timezone_convert(t, source_tz)
             if t_conv:
                 valid_mg_times.append(t_conv)
         signal['martingale_times'] = valid_mg_times
@@ -215,7 +177,7 @@ class TradeManager:
 
         # Watch trade result
         self.selenium.watch_trade_for_result(currency, pending['placed_at'])
-        logger.info(f"[📝] Trade placed: {trade_id} — awaiting result. {random_log()}")
+        logger.info(f"[📝] Trade placed: {trade_id} — awaiting result. {get_random_log_message([])}")
 
     # -----------------
     # Trade result callback
@@ -261,10 +223,19 @@ class TradeManager:
                             pass
                     self.increase_counts[currency_pair] = 0
 
+
 # -------------------------
 # Instantiate global TradeManager
 # -------------------------
 trade_manager = TradeManager()
+
+# -------------------------
+# Start Telegram listener
+# -------------------------
+listener_thread = threading.Thread(target=start_telegram_listener, args=(signal_callback, command_callback))
+listener_thread.daemon = True
+listener_thread.start()
+logger.info("[ℹ️] Telegram listener started.")
 
 # -------------------------
 # Keep bot alive
@@ -275,4 +246,3 @@ try:
         time.sleep(1)
 except KeyboardInterrupt:
     logger.info("[ℹ️] Bot shutting down.")
-        
