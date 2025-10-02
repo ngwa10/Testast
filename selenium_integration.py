@@ -12,6 +12,7 @@ Notes:
   * prepare_for_trade: selects asset/timeframe and spawns a monitor for expected result time.
   * intensive monitoring: starts MONITOR_LEAD_SECONDS before result_dt and polls every INTENSE_POLL_INTERVAL.
   * logs readiness, receipt of orders, results sent to core.
+  * dashboard detection: waits for PocketOption dashboard to load before proceeding.
 """
 
 import time
@@ -60,6 +61,12 @@ class PocketOptionSelenium:
         self._monitors = {}           # key: (currency, entry_iso) -> monitor info
         self._monitors_lock = threading.Lock()
         self._global_monitor_running = False
+
+        # Dashboard detection with retry before starting trading
+        if not self.check_dashboard():
+            logger.error("[❌] Dashboard not detected after max retries. Exiting initialization.")
+            raise RuntimeError("Dashboard not detected")
+
         self.start_result_monitor()
         logger.info("[🟢] Selenium initialized and ready — waiting for orders from Core.")
 
@@ -102,7 +109,49 @@ class PocketOptionSelenium:
             time.sleep(3)
         except Exception as e:
             logger.warning(f"[⚠️] Auto-login failed: {e}")
+
         return driver
+
+    # -----------------
+    # Dashboard check with retries, refresh, and max retry limit
+    # -----------------
+    def check_dashboard(self, max_retries=3, wait_time=180, refresh_interval=15):
+        attempt = 0
+        while attempt < max_retries:
+            start_time = time.time()
+            while time.time() - start_time < wait_time:
+                try:
+                    # Condition 1: URL contains "cabinet"
+                    if "cabinet" in self.driver.current_url:
+                        logger.info(f"[✅] Dashboard URL detected on attempt {attempt+1}.")
+                        return True
+
+                    # Condition 2: currency selector exists
+                    if self.driver.find_elements(By.CSS_SELECTOR, ".asset-name-selector"):
+                        logger.info(f"[✅] Currency selector detected — dashboard loaded on attempt {attempt+1}.")
+                        return True
+
+                    # Condition 3: buy/sell buttons exist
+                    if self.driver.find_elements(By.CSS_SELECTOR, ".trade-buttons button"):
+                        logger.info(f"[✅] Buy/Sell buttons detected — dashboard loaded on attempt {attempt+1}.")
+                        return True
+
+                    logger.info(f"[ℹ️] Dashboard not found yet on attempt {attempt+1}, refreshing in {refresh_interval}s...")
+                    time.sleep(refresh_interval)
+                    self.driver.refresh()
+                except Exception as e:
+                    logger.warning(f"[⚠️] Exception during dashboard check on attempt {attempt+1}: {e}")
+                    time.sleep(refresh_interval)
+                    try:
+                        self.driver.refresh()
+                    except Exception:
+                        pass
+
+            attempt += 1
+            logger.warning(f"[⚠️] Dashboard not detected after {wait_time}s on attempt {attempt}/{max_retries}.")
+
+        logger.error("[❌] Max retry limit reached — dashboard not detected.")
+        return False
 
     # -----------------
     # Utility: small randomized pause (2-10s)
@@ -116,28 +165,14 @@ class PocketOptionSelenium:
     # Select asset: opens dropdown, types pair (no slash), clicks first result (prefer OTC)
     # -----------------
     def select_asset(self, currency_pair, max_attempts=5):
-        """
-        currency_pair is normalized e.g. "CADUSD" (no slash).
-        Steps:
-          1) Click asset-name-selector to open dropdown
-          2) pause 2-10s
-          3) focus search input inside dropdown
-          4) type currency_pair (no slash)
-          5) pause 2-10s
-          6) click first result preferring OTC
-          7) pause 2-10s and return True
-        """
         try:
             for attempt in range(max_attempts):
                 try:
-                    # 1) click asset dropdown opener
                     opener = self.driver.find_element(By.CSS_SELECTOR, ".asset-name-selector")
                     opener.click()
                     logger.debug("[🖱️] Clicked asset dropdown opener.")
                     self._rand_pause()
 
-                    # 2) find search input
-                    # try multiple selectors (site may vary)
                     search_input = None
                     try:
                         search_input = self.driver.find_element(By.CSS_SELECTOR, ".asset-dropdown input")
@@ -152,27 +187,22 @@ class PocketOptionSelenium:
                         time.sleep(0.5)
                         continue
 
-                    # 3) type the currency pair without slash
                     search_term = currency_pair.replace("/", "").replace(" ", "").upper()
                     search_input.clear()
-                    # send chars with small delay
                     for ch in search_term:
                         search_input.send_keys(ch)
                         time.sleep(0.05)
                     logger.debug(f"[🔍] Typed search term '{search_term}' into asset search.")
                     self._rand_pause()
 
-                    # 4) find results list and click the first entry (prefer OTC)
                     options = self.driver.find_elements(By.CSS_SELECTOR, ".asset-dropdown .option")
                     if not options:
-                        # try alternate selector
                         options = self.driver.find_elements(By.CSS_SELECTOR, ".asset-list .asset-item")
                     if not options:
                         logger.debug("[⚠️] No asset options found after search; retrying...")
                         time.sleep(0.5)
                         continue
 
-                    # choose first that contains OTC or first overall
                     chosen = None
                     for opt in options:
                         txt = opt.text.strip().upper()
@@ -184,18 +214,14 @@ class PocketOptionSelenium:
                         chosen = options[0]
                         logger.debug(f"[📈] Choosing first option: '{chosen.text.strip()[:80]}'")
 
-                    # click chosen element
                     try:
                         chosen.click()
                     except Exception:
-                        # fallback: use JS click
                         self.driver.execute_script("arguments[0].click();", chosen)
                     logger.debug("[🖱️] Clicked chosen asset option.")
                     self._rand_pause()
 
-                    # center click to ensure dropdown closed (if hotkey_mode)
                     if self.hotkey_mode:
-                        # click near center of window/chart area
                         try:
                             width = self.driver.execute_script("return window.innerWidth")
                             height = self.driver.execute_script("return window.innerHeight")
@@ -224,16 +250,13 @@ class PocketOptionSelenium:
         try:
             for attempt in range(max_attempts):
                 try:
-                    # open timeframe dropdown
                     tf_opener = self.driver.find_element(By.CSS_SELECTOR, ".timeframe-selector .current")
                     tf_opener.click()
                     logger.debug("[🖱️] Clicked timeframe dropdown opener.")
                     self._rand_pause()
 
-                    # find timeframe options
                     options = self.driver.find_elements(By.CSS_SELECTOR, ".timeframe-selector .option")
                     if not options:
-                        # fallback selectors
                         options = self.driver.find_elements(By.CSS_SELECTOR, ".timeframe-list .option")
                     if not options:
                         logger.debug("[⚠️] No timeframe options found; retrying...")
@@ -244,13 +267,10 @@ class PocketOptionSelenium:
                     tf_upper = timeframe.upper()
                     for opt in options:
                         txt = opt.text.strip().upper()
-                        # Accept "1M", "1 MIN", "1 MINUTE" etc.
                         if tf_upper in txt or (tf_upper == "M1" and ("1M" in txt or "1 MIN" in txt)) or (tf_upper == "M5" and ("5M" in txt or "5 MIN" in txt)):
                             selected = opt
                             break
-
                     if not selected:
-                        # choose first as fallback
                         selected = options[0]
 
                     try:
@@ -261,7 +281,6 @@ class PocketOptionSelenium:
                     logger.debug(f"[🖱️] Selected timeframe option: {selected.text.strip()[:40]}")
                     self._rand_pause()
 
-                    # random click center to close timeframe
                     if self.hotkey_mode:
                         try:
                             width = self.driver.execute_script("return window.innerWidth")
@@ -286,18 +305,10 @@ class PocketOptionSelenium:
 
     # -----------------
     # Called by Core to prepare trade UI and start monitoring for its result
-    # returns True when selection finished (asset+tf) and monitor thread launched
     # -----------------
     def prepare_for_trade(self, currency_pair, entry_dt, timeframe="M1"):
-        """
-        Core calls this before scheduling the actual placement.
-        currency_pair: e.g. "CADUSD" (no slash)
-        entry_dt: tz-aware datetime (entry time)
-        timeframe: "M1" or "M5"
-        """
         try:
             logger.info(f"[📥] Selenium received order from Core: {currency_pair} | Timeframe: {timeframe} | Entry at: {entry_dt.strftime('%H:%M:%S')}")
-            # Perform the UI actions in sequence with randomized pauses
             sel_ok = self.select_asset(currency_pair)
             if not sel_ok:
                 logger.warning(f"[⚠️] select_asset failed for {currency_pair}")
@@ -305,7 +316,6 @@ class PocketOptionSelenium:
             if not tf_ok:
                 logger.warning(f"[⚠️] set_timeframe failed for {timeframe}")
 
-            # compute expected result time (entry -> plus timeframe seconds)
             tf_seconds = TIMEFRAME_SECONDS.get(timeframe.upper(), 60)
             expected_result_dt = entry_dt + timedelta(seconds=tf_seconds)
 
@@ -333,15 +343,13 @@ class PocketOptionSelenium:
         iso_key = (currency_pair, entry_dt.isoformat())
         try:
             logger.debug(f"[🔎] Monitor thread started for {currency_pair} expected result at {result_dt.isoformat()}")
-            # Poll lightly until MONITOR_LEAD_SECONDS before result_dt
             while True:
                 now = datetime.now(entry_dt.tzinfo)
                 seconds_to_result = (result_dt - now).total_seconds()
                 if seconds_to_result <= MONITOR_LEAD_SECONDS:
                     break
-                # sleep a fraction
                 time.sleep(max(0.5, min(2.0, seconds_to_result / 5.0)))
-            # intensive poll window (until result_dt + small buffer)
+
             end_time = result_dt + timedelta(seconds=15)
             logger.info(f"[🔔] Selenium intensive monitoring started for {currency_pair} — checking every {INTENSE_POLL_INTERVAL}s until {end_time.strftime('%H:%M:%S')}")
             while datetime.now(entry_dt.tzinfo) <= end_time:
@@ -366,12 +374,6 @@ class PocketOptionSelenium:
     # Parse trade-results in history DOM; returns 'WIN' or 'LOSS' or None
     # -----------------
     def detect_trade_result(self):
-        """
-        Scans the trade history for the latest entry result.
-        Heuristics:
-         - text starting with '+' or 'win' => WIN
-         - text equal to '$0' or starting with '0' => LOSS
-        """
         try:
             elems = self.driver.find_elements(By.CSS_SELECTOR, ".trade-history .trade-result")
             for e in elems:
@@ -416,4 +418,4 @@ class PocketOptionSelenium:
 
         t = threading.Thread(target=monitor, daemon=True)
         t.start()
-
+     
