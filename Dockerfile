@@ -80,4 +80,5 @@ EXPOSE 5901 6080
 # -------------------------
 # Run debug_core.py on container start
 # -------------------------
-ENTRYPOINT ["python3", "debug_core.py"]
+ENTRYPOINT ["/usr/local/bin/start.sh"]
+
