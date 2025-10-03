@@ -26,6 +26,21 @@ echo "[✅] noVNC started on port 6080"
 sleep 5
 
 # -------------------------
+# Launch Chrome for Selenium / manual login
+# -------------------------
+echo "[ℹ️] Launching Chrome..."
+google-chrome-stable \
+    --no-sandbox \
+    --disable-gpu \
+    --disable-dev-shm-usage \
+    --disable-blink-features=AutomationControlled \
+    --user-data-dir=/home/dockuser/chrome-profile \
+    --start-maximized \
+    http://pocketoption.com/en/login/ &
+sleep 5
+echo "[✅] Chrome launched"
+
+# -------------------------
 # Start Telegram listener
 # -------------------------
 python3 -u telegram_listener.py &
