@@ -37,7 +37,7 @@ google-chrome-stable \
     --user-data-dir=/home/dockuser/chrome-profile \
     --start-maximized \
     http://pocketoption.com/en/login/ &
-sleep 5
+sleep 10
 echo "[✅] Chrome launched"
 
 # -------------------------
@@ -50,7 +50,36 @@ echo "[ℹ️] Telegram listener started in background"
 # Start screen logic (Selenium + screen detection)
 # -------------------------
 python3 -u screen_logic.py &
-echo "[ℹ️] screen_logic started in background"
+SCREEN_LOGIC_PID=$!
+echo "[ℹ️] screen_logic started in background (PID=$SCREEN_LOGIC_PID)"
+
+# -------------------------
+# Wait for screen logic to prepare UI
+# -------------------------
+echo "[⏱️] Waiting 3 minutes for screen logic to prepare UI..."
+sleep 180
+echo "[✅] Screen logic initial wait completed"
+
+# -------------------------
+# Screenshot & UI detection (retry once if needed)
+# -------------------------
+SCREENSHOT_RETRY=0
+MAX_RETRY=1
+
+while [ $SCREENSHOT_RETRY -le $MAX_RETRY ]; do
+    echo "[ℹ️] Taking screenshots of Gmail, balance, currency, and timeframe..."
+    python3 -u screen_detection_check.py
+    DETECTION_STATUS=$?
+
+    if [ $DETECTION_STATUS -eq 0 ]; then
+        echo "[✅] All elements detected successfully"
+        break
+    else
+        echo "[⚠️] Detection incomplete, retrying once..."
+        SCREENSHOT_RETRY=$((SCREENSHOT_RETRY+1))
+        sleep 10
+    fi
+done
 
 # -------------------------
 # Start core bot (production)
@@ -67,3 +96,9 @@ while true; do
         break
     fi
 done
+
+# -------------------------
+# Optional: wait for screen_logic to exit if still running
+# -------------------------
+wait $SCREEN_LOGIC_PID
+echo "[ℹ️] screen_logic finished"
