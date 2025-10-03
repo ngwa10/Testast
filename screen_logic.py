@@ -1,13 +1,14 @@
 # screen_logic.py
 import logging
-import threading
-from datetime import datetime, timedelta
-
-# Import your Selenium integration
-from selenium_integration import PocketOptionSelenium
-
-# Import screen detection tools
-# from screen_tools import click_on_image, read_screen_text  # example placeholders
+import time
+import os
+from datetime import datetime
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 
 logging.basicConfig(
     level=logging.INFO,
@@ -15,106 +16,83 @@ logging.basicConfig(
     datefmt='%H:%M:%S'
 )
 
-# ----------------------
-# Selenium Client Launch
-# ----------------------
-def launch_selenium(headless=False, chromedriver_path="/usr/local/bin/chromedriver"):
-    """
-    Tool: Selenium
-    Launch Chrome, navigate to PocketOption, auto-fill login credentials.
-    Returns Selenium client instance.
-    """
-    logging.info("[🚀] Launching Selenium Chrome client...")
-    try:
-        selenium_client = PocketOptionSelenium(trade_manager=None, headless=headless, chromedriver_path=chromedriver_path)
-        logging.info("[✅] Selenium Chrome client ready.")
-        return selenium_client
-    except Exception as e:
-        logging.error(f"[❌] Failed to launch Selenium: {e}")
-        raise
+CHROME_PROFILE_DIR = "/home/dockuser/chrome-profile"
+SCREENSHOT_DIR = "/home/dockuser/screen_logic_screenshots"
+os.makedirs(SCREENSHOT_DIR, exist_ok=True)
 
-# ----------------------
-# Currency Selection
-# ----------------------
-def select_currency(selenium_client, currency):
-    """
-    Tool: Selenium
-    Opens currency dropdown, searches, selects top result.
-    """
-    logging.info(f"[ℹ️] screen_logic: select_currency({currency})")
-    try:
-        success = selenium_client.select_asset(currency)
-        if success:
-            logging.info(f"[✅] Currency {currency} selected via Selenium.")
-        else:
-            logging.warning(f"[⚠️] Currency {currency} could not be selected via Selenium.")
-        return success
-    except Exception as e:
-        logging.error(f"[❌] Error in select_currency: {e}")
-        return False
+def setup_chrome():
+    """Launch Chrome in VNC session with your profile."""
+    chrome_options = Options()
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+    chrome_options.add_argument(f"--user-data-dir={CHROME_PROFILE_DIR}")
+    chrome_options.add_argument("--start-maximized")
 
-# ----------------------
-# Timeframe Selection
-# ----------------------
-def select_timeframe(timeframe):
-    """
-    Tool: Screen Detection Tools
-    Locate timeframe dropdown visually, click, select M1/M5.
-    """
-    logging.info(f"[ℹ️] screen_logic: select_timeframe({timeframe})")
-    # TODO: use screen detection to click dropdown + select timeframe
-    # Example:
-    # click_on_image("timeframe_dropdown.png")
-    # click_on_image(f"{timeframe}.png")
-    return True  # placeholder
+    service = Service("/usr/local/bin/chromedriver")
+    driver = webdriver.Chrome(service=service, options=chrome_options)
+    driver.get("https://pocketoption.com/en/login/")
+    logging.info("[ℹ️] Chrome launched and navigated to PocketOption login.")
+    return driver
 
-# ----------------------
-# Trade Preparation
-# ----------------------
-def prepare_for_trade(selenium_client, currency, entry_dt, timeframe="M1"):
-    """
-    Orchestrates trade UI:
-    1. Select currency (Selenium)
-    2. Select timeframe (Screen Detection)
-    3. Launch monitor thread for trade result
-    """
-    logging.info(f"[📥] Preparing trade: {currency} | Timeframe: {timeframe} | Entry: {entry_dt.strftime('%H:%M:%S')}")
-    
-    # Step 1: select currency via Selenium
-    if not select_currency(selenium_client, currency):
-        logging.warning(f"[⚠️] Failed to select currency: {currency}")
-    
-    # Step 2: select timeframe via screen detection
-    if not select_timeframe(timeframe):
-        logging.warning(f"[⚠️] Failed to select timeframe: {timeframe}")
-    
-    # Step 3: start monitor thread
-    monitor_thread = threading.Thread(
-        target=monitor_trade_result,
-        args=(currency, entry_dt, timeframe),
-        daemon=True
-    )
-    monitor_thread.start()
-    logging.info(f"[🔔] Monitor thread started for {currency} trade.")
-    
-    return True
+def wait_for_captcha_solve():
+    """Wait for manual captcha solving with a 3-minute delay."""
+    logging.info("[⏳] Waiting 3 minutes for manual login / captcha solving...")
+    time.sleep(180)
+    logging.info("[✅] 3 minutes elapsed. Proceeding to capture balance and dropdowns.")
 
-# ----------------------
-# Monitor Trade Result
-# ----------------------
-def monitor_trade_result(currency, entry_dt, timeframe):
-    """
-    Tool: Screen Detection Tools
-    Polls screen until trade result (WIN/LOSS) detected.
-    Sends results back to Core (via trade_manager).
-    """
-    logging.info(f"[🔎] Monitoring trade result for {currency}...")
-    # TODO: implement screen capture + read result
-    # e.g.,
-    # while not result_found:
-    #     screenshot = capture_screen_area(result_region)
-    #     result = read_screen_text(screenshot)
-    #     if "WIN" in result or "LOSS" in result:
-    #         trade_manager.on_trade_result(currency, result)
-    #         break
-    logging.info(f"[📤] Trade result detected for {currency} (stub).")
+def capture_screenshots(driver):
+    """Capture balance, currency dropdown, and timeframe dropdown screenshots."""
+    elements_to_capture = {
+        "balance": ["css:.balance", "xpath://div[contains(@class,'balance')]"],
+        "currency_dropdown": ["css:.asset-selector", "xpath://button[contains(@class,'asset')]"],
+        "timeframe_dropdown": ["css:.timeframe-selector", "xpath://div[contains(@class,'timeframe')]"]
+    }
+
+    results = {}
+
+    for name, selectors in elements_to_capture.items():
+        found = False
+        for sel in selectors:
+            try:
+                if sel.startswith("css:"):
+                    elem = WebDriverWait(driver, 5).until(
+                        EC.presence_of_element_located((By.CSS_SELECTOR, sel[4:]))
+                    )
+                else:
+                    elem = WebDriverWait(driver, 5).until(
+                        EC.presence_of_element_located((By.XPATH, sel[6:]))
+                    )
+                screenshot_file = os.path.join(
+                    SCREENSHOT_DIR, f"{name}_{datetime.now().strftime('%H%M%S')}.png"
+                )
+                elem.screenshot(screenshot_file)
+                logging.info(f"[📷] Captured screenshot of {name}: {screenshot_file}")
+                found = True
+                break
+            except Exception:
+                continue
+        results[name] = found
+
+    # Log summary
+    captured = [k for k, v in results.items() if v]
+    if len(captured) == 3:
+        logging.info("[✅] Successfully captured all elements (balance, currency dropdown, timeframe).")
+    elif captured:
+        logging.warning(f"[⚠️] Only captured some elements: {captured}")
+    else:
+        logging.error("[❌] Could not capture any of the elements. Retrying once...")
+        # Retry once
+        time.sleep(2)
+        capture_screenshots(driver)
+
+def main():
+    driver = setup_chrome()
+    wait_for_captcha_solve()
+    capture_screenshots(driver)
+    logging.info("[ℹ️] screen_logic initial setup done. Waiting for Core signals...")
+
+if __name__ == "__main__":
+    main()
+    
