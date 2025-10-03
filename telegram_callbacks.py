@@ -1,36 +1,35 @@
 import logging
 from datetime import datetime
-import asyncio
+import time
 import pytz
 import shared  # Always reference singleton dynamically
 
 # --------------------------
 # Config
 # --------------------------
-TRADE_MANAGER_WAIT_SECONDS = 5  # Max wait for TradeManager to initialize
-RETRY_INTERVAL_SECONDS = 0.1    # Check interval
+TRADE_MANAGER_WAIT_SECONDS = 10  # Max wait for TradeManager to initialize
+RETRY_INTERVAL_SECONDS = 0.1     # Check interval
 
 # --------------------------
 # Helper: wait for TradeManager
 # --------------------------
-async def _wait_for_trade_manager(timeout=TRADE_MANAGER_WAIT_SECONDS):
+def wait_for_trade_manager(timeout=TRADE_MANAGER_WAIT_SECONDS):
     elapsed = 0.0
     while shared.trade_manager is None and elapsed < timeout:
-        await asyncio.sleep(RETRY_INTERVAL_SECONDS)
+        time.sleep(RETRY_INTERVAL_SECONDS)
         elapsed += RETRY_INTERVAL_SECONDS
     return shared.trade_manager is not None
 
 # --------------------------
 # Signal Callback
 # --------------------------
-async def signal_callback(signal: dict, raw_message=None):
+def signal_callback(signal: dict, raw_message=None):
     """
     Called when a trading signal is parsed from Telegram.
     Automatically forwards it to the trading core with timezone handling.
     """
 
-    ready = await _wait_for_trade_manager()
-    if not ready:
+    if not wait_for_trade_manager():
         logging.error("[❌] TradeManager not ready after waiting; signal ignored.")
         return
 
@@ -112,12 +111,11 @@ async def signal_callback(signal: dict, raw_message=None):
 # --------------------------
 # Command Callback
 # --------------------------
-async def command_callback(cmd: str):
+def command_callback(cmd: str):
     """
     Handles /start and /stop commands.
     """
-    ready = await _wait_for_trade_manager()
-    if not ready:
+    if not wait_for_trade_manager():
         logging.error("[❌] TradeManager not ready after waiting; command ignored.")
         return
 
@@ -132,4 +130,4 @@ async def command_callback(cmd: str):
         logging.info("[✅] Start command received — trading enabled.")
     elif cmd.startswith("/stop"):
         logging.info("[🛑] Stop command received — trading disabled.")
-    
+                        
