@@ -1,5 +1,5 @@
 
-# PocketOption Auto-Trader
+# PocketOption Auto-Trader.
 
 Automated trading bot for PocketOption using Python, Selenium, and PyAutoGUI with VNC/NoVNC for GUI interaction and optional Telegram control. Includes robust dashboard verification and monitoring.
 
