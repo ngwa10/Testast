@@ -11,7 +11,7 @@ logging.basicConfig(level=logging.DEBUG,
 logger = logging.getLogger(__name__)
 
 async def main():
-    # Construct a dummy signal to test your existing code
+    # Construct a dummy signal to test your existing code.
     tz = pytz.timezone("Africa/Douala")
     now = datetime.now(tz)
     signal = {
