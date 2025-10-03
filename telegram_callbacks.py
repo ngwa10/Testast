@@ -2,7 +2,8 @@ import logging
 from datetime import datetime, timedelta
 import pytz
 
-from core import trade_manager  # 👈 Import the TradeManager instance from core.py
+from shared import trade_manager  # ✅ Use the singleton created in core.py
+
 
 # --------------------------
 # Signal Callback
