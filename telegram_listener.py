@@ -1,13 +1,13 @@
 """
-Telegram integration: Listener and signal parser with detailed logging.
-Supports Anna, Precisiontrike, and OTC signal formats.
-Handles multiple timezones and prepares signals for core.py trading.
+Telegram Listener with integrated signal & command handling.
+Directly communicates with core.py TradeManager.
 """
 
 from telethon import TelegramClient, events
 import re
 from datetime import datetime, timedelta
 import logging
+import shared  # singleton holding TradeManager
 
 # =========================
 # HARD-CODED CREDENTIALS
@@ -25,35 +25,32 @@ logging.basicConfig(
     format='[%(asctime)s] %(levelname)s: %(message)s',
     datefmt='%H:%M:%S'
 )
+logger = logging.getLogger("telegram_listener")
 
+
+# =========================
+# Helper log functions
+# =========================
 def log_info(msg):
-    logging.info(msg)
-    for handler in logging.getLogger().handlers:
+    logger.info(msg)
+    for handler in logger.handlers:
         handler.flush()
+
 
 def log_error(msg):
-    logging.error(msg)
-    for handler in logging.getLogger().handlers:
+    logger.error(msg)
+    for handler in logger.handlers:
         handler.flush()
 
-# =========================
-# Import core_utils for timezone conversion
-# =========================
-try:
-    from core_utils import timezone_convert
-except Exception:
-    timezone_convert = None
-    log_error("[⚠️] core_utils.timezone_convert not found, signals will use raw strings!")
-
-# =========================
-# Telegram Client Setup
-# =========================
-client = TelegramClient('bot_session', api_id, api_hash)
 
 # =========================
 # Signal Parser
 # =========================
 def parse_signal(message_text):
+    """
+    Extracts currency pair, direction, entry time, timeframe, martingale times.
+    Returns dict ready for TradeManager or None if invalid.
+    """
     result = {
         "currency_pair": None,
         "direction": None,
@@ -95,14 +92,10 @@ def parse_signal(message_text):
                 source = "Cameroon"
             result['source'] = source
 
-            if timezone_convert:
-                entry_utc = timezone_convert(entry_time_str, source)
-                if not entry_utc:
-                    log_info(f"[⚠️] Signal entry time {entry_time_str} already passed, skipping.")
-                    return None
-                result['entry_time'] = entry_utc
-            else:
-                result['entry_time'] = entry_time_str
+            # Convert to datetime
+            hour, minute = map(int, entry_time_str.split(":"))
+            entry_dt = datetime.utcnow().replace(hour=hour, minute=minute, second=0, microsecond=0)
+            result['entry_time'] = entry_dt
 
         # Timeframe
         timeframe_match = re.search(r'Expiration:?\s*(M1|M5|1 Minute|5 Minute|5M|1M|5-minute)', message_text, re.IGNORECASE)
@@ -117,19 +110,15 @@ def parse_signal(message_text):
             r'(?:Level \d+|level(?: at)?|PROTECTION|level At|level|ª PROTECTION)\D*[:\-\—>]*\s*(\d{2}:\d{2})',
             message_text, re.IGNORECASE
         )
-        martingale_utc_times = []
         for t in martingale_matches:
-            if timezone_convert:
-                t_utc = timezone_convert(t, result['source'])
-                if t_utc:
-                    martingale_utc_times.append(t_utc)
-        result['martingale_times'] = martingale_utc_times
+            hour, minute = map(int, t.split(":"))
+            mg_dt = datetime.utcnow().replace(hour=hour, minute=minute, second=0, microsecond=0)
+            result['martingale_times'].append(mg_dt)
 
-        # Default Anna martingale if none found
+        # Default Anna martingale if none
         if is_anna_signal and not result['martingale_times'] and result['entry_time']:
-            entry_dt = result['entry_time']
             interval = timedelta(minutes=1)
-            first_mg = entry_dt + interval
+            first_mg = result['entry_time'] + interval
             second_mg = first_mg + interval
             result['martingale_times'] = [first_mg, second_mg]
             log_info(f"[🔁] Default Anna martingale times applied: {[t.strftime('%H:%M') for t in result['martingale_times']]}")
@@ -143,27 +132,33 @@ def parse_signal(message_text):
         log_error(f"[❌] Error parsing signal: {e}")
         return None
 
+
 # =========================
 # Telegram Listener
 # =========================
-def start_telegram_listener(signal_callback, command_callback):
+def start_telegram_listener():
     log_info("[🔌] Starting Telegram listener...")
+    client = TelegramClient('bot_session', api_id, api_hash)
 
     @client.on(events.NewMessage(chats=TARGET_CHAT_ID))
     async def handler(event):
         try:
             text = event.message.message
 
+            # Commands
             if text.startswith("/start") or text.startswith("/stop"):
                 log_info(f"[💻] Command detected: {text}")
-                await command_callback(text)
+                if shared.trade_manager:
+                    shared.trade_manager.handle_command(text)
                 return
 
+            # Signals
             signal = parse_signal(text)
             if signal:
                 received_time = datetime.utcnow().strftime("%H:%M:%S")
                 log_info(f"[⚡] Parsed signal at {received_time}: {signal}")
-                await signal_callback(signal)
+                if shared.trade_manager:
+                    shared.trade_manager.handle_signal(signal)
             else:
                 log_info("[ℹ️] Message ignored (not a valid signal).")
 
@@ -178,23 +173,11 @@ def start_telegram_listener(signal_callback, command_callback):
     except Exception as e:
         log_error(f"[❌] Telegram listener failed: {e}")
 
+
 # =========================
 # Entry Point
 # =========================
 if __name__ == "__main__":
     log_info("[🚀] Telegram listener script started.")
-
-    try:
-        # ✅ Import callbacks from telegram_callbacks.py
-        from telegram_callbacks import signal_callback, command_callback
-    except ImportError as e:
-        log_error(f"[❌] Failed to import telegram_callbacks: {e}")
-        raise
-
-    # ✅ Start the listener (this keeps the process alive)
-    try:
-        start_telegram_listener(signal_callback, command_callback)
-    except Exception as e:
-        log_error(f"[❌] Telegram listener crashed: {e}")
-        raise
-                             
+    start_telegram_listener()
+    
