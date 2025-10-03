@@ -1,35 +1,33 @@
 import logging
 from datetime import datetime
-import time
+import asyncio
 import pytz
-import shared  # Always reference singleton dynamically
+import shared  # dynamic singleton reference
 
 # --------------------------
 # Config
 # --------------------------
-TRADE_MANAGER_WAIT_SECONDS = 10  # Max wait for TradeManager to initialize
-RETRY_INTERVAL_SECONDS = 0.1     # Check interval
+TRADE_MANAGER_WAIT_SECONDS = 10
+RETRY_INTERVAL_SECONDS = 0.1
 
 # --------------------------
-# Helper: wait for TradeManager
+# Helper: async wait for TradeManager
 # --------------------------
-def wait_for_trade_manager(timeout=TRADE_MANAGER_WAIT_SECONDS):
+async def wait_for_trade_manager(timeout=TRADE_MANAGER_WAIT_SECONDS):
     elapsed = 0.0
     while shared.trade_manager is None and elapsed < timeout:
-        time.sleep(RETRY_INTERVAL_SECONDS)
+        await asyncio.sleep(RETRY_INTERVAL_SECONDS)
         elapsed += RETRY_INTERVAL_SECONDS
     return shared.trade_manager is not None
 
 # --------------------------
 # Signal Callback
 # --------------------------
-def signal_callback(signal: dict, raw_message=None):
-    """
-    Called when a trading signal is parsed from Telegram.
-    Automatically forwards it to the trading core with timezone handling.
-    """
+async def signal_callback(signal: dict, raw_message=None):
+    """Forward parsed Telegram signal to TradeManager safely."""
 
-    if not wait_for_trade_manager():
+    ready = await wait_for_trade_manager()
+    if not ready:
         logging.error("[❌] TradeManager not ready after waiting; signal ignored.")
         return
 
@@ -43,7 +41,7 @@ def signal_callback(signal: dict, raw_message=None):
     elif msg_source == "Cameroon":
         tz = pytz.timezone("Africa/Douala")
     else:
-        tz = pytz.timezone("UTC-3")  # Default OTC-3
+        tz = pytz.timezone("UTC-3")  # default OTC-3
 
     now_utc = datetime.utcnow().replace(tzinfo=pytz.UTC)
 
@@ -82,7 +80,7 @@ def signal_callback(signal: dict, raw_message=None):
     logging.info(f"[📩] Signal received for {signal['currency_pair']} ({signal['direction']}) at {entry_dt_local.strftime('%H:%M')} {msg_source} — scheduling trade 🔥")
 
     # --------------------------
-    # Ensure martingale times are datetime objects
+    # Convert martingale times
     # --------------------------
     mg_times_fixed = []
     for t in signal.get("martingale_times", []):
@@ -111,11 +109,11 @@ def signal_callback(signal: dict, raw_message=None):
 # --------------------------
 # Command Callback
 # --------------------------
-def command_callback(cmd: str):
-    """
-    Handles /start and /stop commands.
-    """
-    if not wait_for_trade_manager():
+async def command_callback(cmd: str):
+    """Handle /start and /stop commands asynchronously."""
+
+    ready = await wait_for_trade_manager()
+    if not ready:
         logging.error("[❌] TradeManager not ready after waiting; command ignored.")
         return
 
@@ -130,4 +128,4 @@ def command_callback(cmd: str):
         logging.info("[✅] Start command received — trading enabled.")
     elif cmd.startswith("/stop"):
         logging.info("[🛑] Stop command received — trading disabled.")
-                        
+            
