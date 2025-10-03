@@ -1,15 +1,24 @@
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
+import asyncio
 import pytz
-import shared  # always reference shared, fetch runtime
+import shared  # Always reference singleton dynamically
 
 # --------------------------
-# Helper to fetch TradeManager safely
+# Config
 # --------------------------
-def get_trade_manager():
-    if shared.trade_manager is None:
-        raise RuntimeError("[❌] TradeManager not initialized yet in shared!")
-    return shared.trade_manager
+TRADE_MANAGER_WAIT_SECONDS = 5  # Max wait for TradeManager to initialize
+RETRY_INTERVAL_SECONDS = 0.1    # Check interval
+
+# --------------------------
+# Helper: wait for TradeManager
+# --------------------------
+async def _wait_for_trade_manager(timeout=TRADE_MANAGER_WAIT_SECONDS):
+    elapsed = 0.0
+    while shared.trade_manager is None and elapsed < timeout:
+        await asyncio.sleep(RETRY_INTERVAL_SECONDS)
+        elapsed += RETRY_INTERVAL_SECONDS
+    return shared.trade_manager is not None
 
 # --------------------------
 # Signal Callback
@@ -18,17 +27,13 @@ async def signal_callback(signal: dict, raw_message=None):
     """
     Called when a trading signal is parsed from Telegram.
     Automatically forwards it to the trading core with timezone handling.
-
-    Signal example:
-    {
-        "currency_pair": "EUR/USD",
-        "direction": "BUY",
-        "entry_time": "14:30" or datetime.datetime,
-        "timeframe": "M1",
-        "martingale_times": ["14:31", "14:32"] or datetime.datetime,
-        "source": "Cameroon"  # or UTC-4 / OTC-3
-    }
     """
+
+    ready = await _wait_for_trade_manager()
+    if not ready:
+        logging.error("[❌] TradeManager not ready after waiting; signal ignored.")
+        return
+
     msg_source = signal.get("source", "OTC-3")
 
     # --------------------------
@@ -52,8 +57,9 @@ async def signal_callback(signal: dict, raw_message=None):
             entry_dt_local = entry_time_val.astimezone(tz)
         elif isinstance(entry_time_val, str):
             fmt = "%H:%M"
-            entry_dt_local = tz.localize(datetime.combine(datetime.now(tz).date(),
-                                                          datetime.strptime(entry_time_val, fmt).time()))
+            entry_dt_local = tz.localize(
+                datetime.combine(datetime.now(tz).date(), datetime.strptime(entry_time_val, fmt).time())
+            )
         else:
             logging.error(f"[❌] entry_time has invalid type: {type(entry_time_val)}")
             return
@@ -74,8 +80,7 @@ async def signal_callback(signal: dict, raw_message=None):
         logging.info(f"[⚠️] Signal entry time {entry_dt_local.strftime('%H:%M')} too far in the future (>10min). Ignored.")
         return
 
-    logging.info(f"[📩] Signal received for {signal['currency_pair']} ({signal['direction']}) at "
-                 f"{entry_dt_local.strftime('%H:%M')} {msg_source} — scheduling trade 🔥")
+    logging.info(f"[📩] Signal received for {signal['currency_pair']} ({signal['direction']}) at {entry_dt_local.strftime('%H:%M')} {msg_source} — scheduling trade 🔥")
 
     # --------------------------
     # Ensure martingale times are datetime objects
@@ -86,8 +91,9 @@ async def signal_callback(signal: dict, raw_message=None):
             if isinstance(t, datetime):
                 mg_times_fixed.append(t.astimezone(tz))
             elif isinstance(t, str):
-                mg_times_fixed.append(tz.localize(datetime.combine(datetime.now(tz).date(),
-                                                                   datetime.strptime(t, "%H:%M").time())))
+                mg_times_fixed.append(
+                    tz.localize(datetime.combine(datetime.now(tz).date(), datetime.strptime(t, "%H:%M").time()))
+                )
         except Exception as e:
             logging.warning(f"[⚠️] Invalid martingale time '{t}': {e}")
     signal['martingale_times'] = mg_times_fixed
@@ -97,8 +103,7 @@ async def signal_callback(signal: dict, raw_message=None):
     # Forward to TradeManager
     # --------------------------
     try:
-        tm = get_trade_manager()
-        tm.handle_signal(signal)
+        shared.trade_manager.handle_signal(signal)
         logging.info("[🤖] Signal forwarded to TradeManager for execution.")
     except Exception as e:
         logging.error(f"[❌] Failed to forward signal to TradeManager: {e}")
@@ -111,11 +116,15 @@ async def command_callback(cmd: str):
     """
     Handles /start and /stop commands.
     """
+    ready = await _wait_for_trade_manager()
+    if not ready:
+        logging.error("[❌] TradeManager not ready after waiting; command ignored.")
+        return
+
     logging.info(f"[💻] Command received: {cmd}")
 
     try:
-        tm = get_trade_manager()
-        tm.handle_command(cmd)
+        shared.trade_manager.handle_command(cmd)
     except Exception as e:
         logging.error(f"[❌] Failed to process command in TradeManager: {e}")
 
@@ -123,4 +132,4 @@ async def command_callback(cmd: str):
         logging.info("[✅] Start command received — trading enabled.")
     elif cmd.startswith("/stop"):
         logging.info("[🛑] Stop command received — trading disabled.")
-            
+    
