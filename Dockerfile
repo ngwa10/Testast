@@ -16,6 +16,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-tk python3-dev scrot xclip xsel \
     xvfb x11-utils x11vnc pulseaudio alsa-utils \
     ffmpeg \
+    libsm6 libxext6 libxrender-dev libglib2.0-0 \
+    tesseract-ocr tesseract-ocr-eng \
     && rm -rf /var/lib/apt/lists/*
 
 # -------------------------
@@ -40,16 +42,7 @@ RUN CHROME_VERSION=$(google-chrome --version | sed 's/[^0-9.]//g' | cut -d. -f1)
 # -------------------------
 # Install Python packages
 # -------------------------
-RUN pip3 install --no-cache-dir \
-    pytz selenium telethon numpy python-dotenv \
-    pyautogui pillow sounddevice opencv-python pytesseract
-
-# -------------------------
-# Install Tesseract OCR system dependencies
-# -------------------------
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    tesseract-ocr libtesseract-dev libleptonica-dev pkg-config \
-    && rm -rf /var/lib/apt/lists/*
+RUN pip3 install --no-cache-dir pytz selenium telethon numpy python-dotenv pyautogui pillow sounddevice opencv-python pytesseract
 
 # -------------------------
 # Install noVNC
