@@ -4,21 +4,23 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
-import pytesseract
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 from PIL import Image
-import pyautogui
+import pytesseract
 
 # -------------------------
-# Gmail credentials
+# Gmail credentials (use App Password if 2FA)
 # -------------------------
-EMAIL = "mylivemyfuture@123gmail.com"
+EMAIL = "ylivemyfuture@123gmail.com"
 PASSWORD = "AaCcWw3468,"
 
 # -------------------------
-# Selenium Chrome setup
+# Chrome setup
 # -------------------------
 chrome_options = Options()
 chrome_options.add_argument("--no-sandbox")
+chrome_options.add_argument("--disable-setuid-sandbox")
 chrome_options.add_argument("--disable-dev-shm-usage")
 chrome_options.add_argument("--disable-blink-features=AutomationControlled")
 chrome_options.add_argument("--start-maximized")
@@ -30,35 +32,31 @@ driver = webdriver.Chrome(service=service, options=chrome_options)
 # -------------------------
 # Wait for UI to load
 # -------------------------
-print("[⏱️] Waiting 3 minutes for UI readiness...")
-time.sleep(180)
+print("[⏱️] Waiting 10 seconds for UI readiness...")
+time.sleep(10)
 
 # -------------------------
-# Gmail login
+# Gmail login (with explicit waits)
 # -------------------------
 try:
     driver.get("https://mail.google.com/")
-    time.sleep(2)
-    
-    # Email input
-    email_input = driver.find_element(By.ID, "identifierId")
+    wait = WebDriverWait(driver, 20)
+
+    email_input = wait.until(EC.presence_of_element_located((By.ID, "identifierId")))
     email_input.send_keys(EMAIL)
     email_input.send_keys(Keys.RETURN)
-    time.sleep(3)
 
-    # Password input
-    password_input = driver.find_element(By.NAME, "password")
+    password_input = wait.until(EC.presence_of_element_located((By.NAME, "password")))
     password_input.send_keys(PASSWORD)
     password_input.send_keys(Keys.RETURN)
-    time.sleep(5)
 
-    print("[✅] Gmail login attempted via Selenium")
+    print("[✅] Gmail login attempted successfully")
 
 except Exception as e:
     print("[⚠️] Gmail login failed:", e)
 
 # -------------------------
-# Screenshots function
+# Screenshot function
 # -------------------------
 def take_screenshot(name):
     img_path = f"/home/dockuser/{name}.png"
@@ -66,13 +64,8 @@ def take_screenshot(name):
     print(f"[✅] Screenshot saved: {img_path}")
     return img_path
 
-# Take screenshots of key elements
-screenshots = [
-    "gmail_login",
-    "balance_screen",
-    "currency_dropdown",
-    "timeframe_dropdown"
-]
+# Screenshots to capture
+screenshots = ["gmail_login", "balance_screen", "currency_dropdown", "timeframe_dropdown"]
 
 for s in screenshots:
     take_screenshot(s)
