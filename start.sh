@@ -32,6 +32,12 @@ python3 -u telegram_listener.py &
 echo "[ℹ️] Telegram listener started in background"
 
 # -------------------------
+# Start screen logic (Selenium + screen detection)
+# -------------------------
+python3 -u screen_logic.py &
+echo "[ℹ️] screen_logic started in background"
+
+# -------------------------
 # Start core bot (production)
 # -------------------------
 while true; do
