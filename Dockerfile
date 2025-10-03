@@ -40,7 +40,16 @@ RUN CHROME_VERSION=$(google-chrome --version | sed 's/[^0-9.]//g' | cut -d. -f1)
 # -------------------------
 # Install Python packages
 # -------------------------
-RUN pip3 install --no-cache-dir pytz selenium telethon numpy python-dotenv pyautogui pillow sounddevice
+RUN pip3 install --no-cache-dir \
+    pytz selenium telethon numpy python-dotenv \
+    pyautogui pillow sounddevice opencv-python pytesseract
+
+# -------------------------
+# Install Tesseract OCR system dependencies
+# -------------------------
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tesseract-ocr libtesseract-dev libleptonica-dev pkg-config \
+    && rm -rf /var/lib/apt/lists/*
 
 # -------------------------
 # Install noVNC
@@ -67,7 +76,6 @@ RUN useradd -m -s /bin/bash -u 1000 dockuser \
 # -------------------------
 COPY .env core.py screen_logic.py telegram_listener.py telegram_callbacks.py core_utils.py shared.py logs.json debug_core.py /home/dockuser/
 RUN chown -R dockuser:dockuser /home/dockuser
-
 
 USER dockuser
 WORKDIR /home/dockuser
