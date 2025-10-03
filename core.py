@@ -228,7 +228,6 @@ class TradeManager:
             logger.error(f"[❌] Trade {trade_id}: failed to send main-hotkey: {e}")
 
         # after placing: wait 2-40s and send increase-hotkey ONCE
-        # only send increase if martingale_level is <= max_martingale (we still send on base level as "prepare")
         if martingale_level <= self.max_martingale:
             inc_delay = random.randint(2, 40)
             logger.info(f"[⌛] Trade {trade_id}: waiting {inc_delay}s before increase-hotkey (level={martingale_level})")
@@ -248,12 +247,10 @@ class TradeManager:
         got_result = event.wait(timeout=wait_timeout)
 
         if got_result:
-            # process result
             with _registry_lock:
                 info = _pending_trades.get(trade_id)
             result_text = info.get("result") if info else None
             logger.info(f"[📣] Trade {trade_id}: result received -> {result_text}")
-            # Win handling: stop group
             if result_text and result_text.strip().upper().startswith("WIN"):
                 logger.info(_random_log("win_logs"))
                 logger.info(f"[✅] Trade {trade_id} WIN — stopping martingale chain for group {group_id}")
@@ -264,14 +261,12 @@ class TradeManager:
                     _pending_trades.pop(trade_id, None)
                 return
             else:
-                # LOSS or other - continue if next martingale scheduled
                 logger.info(_random_log("loss_logs"))
                 logger.info(f"[↪️] Trade {trade_id} LOSS/OTHER — continuing to next scheduled martingale (if any).")
                 with _registry_lock:
                     _pending_trades.pop(trade_id, None)
                 return
         else:
-            # No result received within expiry => stop group and log
             logger.warning(f"[❌] Trade {trade_id}: NO RESULT received from screen_logic within expiry. Stopping martingale chain for group {group_id}.")
             logger.info(_random_log("loss_logs"))
             with _registry_lock:
@@ -293,10 +288,6 @@ class TradeManager:
             return True
 
     def trade_result_received(self, trade_id: Optional[str], result_text: str):
-        """
-        Accepts a result_text like "WIN +$1.23" or "LOSS" etc.
-        If trade_id provided, we match exactly. Otherwise we match the most recent pending trade.
-        """
         try:
             rt = (result_text or "").strip()
             logger.info(f"[🛰️] trade_result_received called -> {trade_id=} {rt}")
@@ -305,12 +296,10 @@ class TradeManager:
                 if ok:
                     logger.debug(f"[ℹ️] Matched result by id {trade_id}")
                     return
-            # No id or not found: match most recent pending trade
             with _registry_lock:
                 if not _pending_trades:
                     logger.info(f"[ℹ️] No pending trades to match result: {rt}")
                     return
-                # pick most recent placed_at
                 latest_id = None
                 latest_time = None
                 for tid, tinfo in _pending_trades.items():
@@ -326,15 +315,10 @@ class TradeManager:
             logger.exception(f"[❌] trade_result_received error: {e}")
 
     def handle_trade_result(self, status: str, amount: Optional[float] = None, trade_id: Optional[str] = None):
-        """
-        Alternate structured API: screen_logic can call this like:
-            core.handle_trade_result(status='WIN', amount=+1.23, trade_id='...') 
-        """
         try:
             s = (status or "").strip()
             txt = s
             if amount is not None:
-                # format amount if numeric
                 try:
                     txt = f"{s} {amount:+g}"
                 except Exception:
@@ -343,37 +327,31 @@ class TradeManager:
         except Exception as e:
             logger.exception(f"[❌] handle_trade_result error: {e}")
 
-# single manager instance
-_manager = TradeManager(max_martingale=3)
+# ---------------------------
+# Shared instance
+# ---------------------------
+import shared  # NEW: shared.py contains trade_manager
+shared.trade_manager = TradeManager(max_martingale=3)
 
 # ---------------------------
 # Public API
 # ---------------------------
 def signal_callback(signal: dict):
-    """
-    External entrypoint: non-blocking. Use to submit parsed signals from telegram listener.
-    """
-    _manager.handle_signal(signal)
+    shared.trade_manager.handle_signal(signal)
 
 def trade_result_received(trade_id: Optional[str], result_text: str):
-    """
-    Backwards-compatible alias: screen_logic may call this to report results.
-    """
-    _manager.trade_result_received(trade_id, result_text)
+    shared.trade_manager.trade_result_received(trade_id, result_text)
 
 def handle_trade_result(status: str, amount: Optional[float] = None, trade_id: Optional[str] = None):
-    """
-    Structured result API: screen_logic may call this.
-    """
-    _manager.handle_trade_result(status, amount, trade_id)
+    shared.trade_manager.handle_trade_result(status, amount, trade_id)
 
 # Keep the process alive when run directly
 if __name__ == "__main__":
     logger.info("[🚀] Core started (hotkey mode). Waiting for signals...")
     try:
         while True:
-            # emit occasional idle personality logs during long waits
             time.sleep(30)
             logger.info(_random_log("idle_logs"))
     except KeyboardInterrupt:
         logger.info("[🛑] Core stopped by KeyboardInterrupt")
+  
