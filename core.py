@@ -278,6 +278,23 @@ class TradeManager:
         except Exception as e:
             logger.exception(f"[❌] handle_trade_result error: {e}")
 
+    # ---- handle Telegram /start and /stop ----
+    def handle_command(self, cmd: str):
+        """
+        Handles commands like /start and /stop without breaking the core logic.
+        """
+        try:
+            if cmd.startswith("/start"):
+                logger.info("[✅] Trading started (command received)")
+                # Optional: self.enabled = True
+            elif cmd.startswith("/stop"):
+                logger.info("[🛑] Trading stopped (command received)")
+                # Optional: self.enabled = False
+            else:
+                logger.info(f"[ℹ️] Unknown command received: {cmd}")
+        except Exception as e:
+            logger.exception(f"[❌] handle_command error: {e}")
+
 # ---------------------------
 # Create singleton in shared
 # ---------------------------
@@ -306,4 +323,3 @@ if __name__ == "__main__":
             logger.info(_random_log("idle_logs"))
     except KeyboardInterrupt:
         logger.info("[🛑] Core stopped by KeyboardInterrupt")
-                   
