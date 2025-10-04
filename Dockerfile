@@ -1,38 +1,31 @@
-# -------------------------
-# Base image
-# -------------------------
 FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
     DISPLAY=:1 \
-    VNC_RESOLUTION=1024x600 \
+    VNC_RESOLUTION=1280x800 \
     NO_VNC_HOME=/opt/noVNC
 
 # -------------------------
-# Install system packages
+# Install packages
 # -------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl wget ca-certificates gnupg2 software-properties-common \
+    curl wget ca-certificates gnupg2 \
     python3 python3-pip git unzip \
     tigervnc-standalone-server tigervnc-tools \
-    xfce4-session xfce4-panel xfce4-terminal dbus dbus-x11 procps dos2unix \
+    xfce4-session xfce4-panel xfce4-terminal dbus-x11 procps dos2unix \
     python3-tk python3-dev scrot xclip xsel \
-    xvfb x11-utils x11vnc pulseaudio alsa-utils \
-    ffmpeg \
-    libsm6 libxext6 libxrender-dev libglib2.0-0 \
-    tesseract-ocr tesseract-ocr-eng \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/*
 
 # -------------------------
-# Install Google Chrome
+# Install Chrome
 # -------------------------
 RUN curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg \
     && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list \
     && apt-get update && apt-get install -y --no-install-recommends google-chrome-stable \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/*
 
 # -------------------------
-# Install ChromeDriver
+# ChromeDriver
 # -------------------------
 RUN CHROME_VERSION=$(google-chrome --version | sed 's/[^0-9.]//g' | cut -d. -f1) \
     && LATEST_URL=$(curl -s "https://googlechromelabs.github.io/chrome-for-testing/LATEST_RELEASE_${CHROME_VERSION}") \
@@ -43,10 +36,9 @@ RUN CHROME_VERSION=$(google-chrome --version | sed 's/[^0-9.]//g' | cut -d. -f1)
     && rm -rf /tmp/chromedriver.zip /usr/local/bin/chromedriver-linux64
 
 # -------------------------
-# Install Python dependencies
+# Install Python packages
 # -------------------------
-RUN pip3 install --no-cache-dir \
-    pytz selenium telethon numpy python-dotenv pyautogui pillow sounddevice opencv-python pytesseract
+RUN pip3 install --no-cache-dir pytz selenium telethon numpy python-dotenv pyautogui pillow
 
 # -------------------------
 # Install noVNC
@@ -56,28 +48,26 @@ RUN git clone --depth 1 --branch v1.4.0 https://github.com/novnc/noVNC.git ${NO_
     && chmod +x ${NO_VNC_HOME}/utils/websockify/run
 
 # -------------------------
+# Copy start.sh and convert (as root)
+# -------------------------
+COPY start.sh /usr/local/bin/start.sh
+RUN dos2unix /usr/local/bin/start.sh && chmod +x /usr/local/bin/start.sh
+
+# -------------------------
 # Create non-root user
 # -------------------------
 RUN useradd -m -s /bin/bash -u 1000 dockuser \
     && mkdir -p /home/dockuser/.vnc /home/dockuser/chrome-profile
 
 # -------------------------
-# Copy all repository files
+# Copy bot files (change ownership)
 # -------------------------
-COPY . /home/dockuser/
-RUN chown -R dockuser:dockuser /home/dockuser \
-    && find /home/dockuser -type f -name "*.sh" -exec dos2unix {} \; \
-    && chmod +x /home/dockuser/*.sh
+COPY .env core.py selenium_integration.py telegram_listener.py telegram_callbacks.py core_utils.py logs.json /home/dockuser/
+RUN chown -R dockuser:dockuser /home/dockuser
 
 USER dockuser
 WORKDIR /home/dockuser
 
-# -------------------------
-# Expose VNC and noVNC ports
-# -------------------------
 EXPOSE 5901 6080
 
-# -------------------------
-# Entrypoint
-# -------------------------
-ENTRYPOINT ["/home/dockuser/start.sh"]
+ENTRYPOINT ["/usr/local/bin/start.sh"]
