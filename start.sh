@@ -22,28 +22,34 @@ vncserver $DISPLAY -geometry ${VNC_RESOLUTION} -depth 24 -SecurityTypes None
 echo "[✅] VNC server started on $DISPLAY with resolution ${VNC_RESOLUTION}"
 
 # -------------------------
-# Start Telegram listener (background, logs captured)
+# Wait until X server socket exists
+# -------------------------
+echo "[ℹ️] Waiting for X server socket..."
+while [ ! -e /tmp/.X11-unix/X${DISPLAY#:} ]; do
+    sleep 0.5
+done
+echo "[✅] X server is ready!"
+
+# -------------------------
+# Start noVNC
+# -------------------------
+echo "[ℹ️] Starting noVNC proxy..."
+${NO_VNC_HOME}/utils/novnc_proxy --vnc localhost:5901 --listen 8080 &
+echo "[✅] noVNC started on port 8080 (access via http://<your-domain>:8080)"
+
+# -------------------------
+# Start Telegram listener
 # -------------------------
 echo "[ℹ️] Starting Telegram listener..."
-python3 -u telegram_listener.py 2>&1 | tee /dev/stdout &
+python3 -u telegram_listener.py &
 echo "[✅] Telegram listener started"
 
 # -------------------------
-# Start core bot in loop (background, logs captured)
+# Start core bot in loop
 # -------------------------
-echo "[ℹ️] Starting core bot loop..."
-(
 while true; do
     echo "[ℹ️] Starting core bot..."
-    python3 -u core.py 2>&1 | tee /dev/stdout || true
+    python3 -u core.py || true
     echo "[⚠️] Core bot exited unexpectedly. Restarting in 5 seconds..."
     sleep 5
 done
-) &
-echo "[✅] Core bot loop started"
-
-# -------------------------
-# Start noVNC in foreground (logs captured)
-# -------------------------
-echo "[ℹ️] Starting noVNC proxy in foreground..."
-exec ${NO_VNC_HOME}/utils/novnc_proxy --vnc localhost:5901 --listen 8080
