@@ -2,68 +2,52 @@
 set -e
 
 # -------------------------
-# Environment
+# Setup
 # -------------------------
-export DISPLAY=:1
-export NO_VNC_HOME=/opt/noVNC
-export VNC_RESOLUTION=${VNC_RESOLUTION:-1280x800}
+mkdir -p /home/dockuser/.vnc /home/dockuser/chrome-profile
+chmod 700 /home/dockuser/.vnc
+
+# Create xstartup
+cat > /home/dockuser/.vnc/xstartup << 'EOF'
+#!/bin/bash
+export XKL_XMODMAP_DISABLE=1
+exec startxfce4
+EOF
+chmod +x /home/dockuser/.vnc/xstartup
 
 # -------------------------
-# Start DBus
-# -------------------------
-eval $(dbus-launch --sh-syntax)
-echo "[ℹ️] DBus session started"
-
-# -------------------------
-# Start VNC server
+# Start VNC
 # -------------------------
 echo "[ℹ️] Starting VNC server..."
-vncserver $DISPLAY -geometry ${VNC_RESOLUTION} -depth 24 -SecurityTypes None
-echo "[✅] VNC server started on $DISPLAY with resolution ${VNC_RESOLUTION}"
-
-# -------------------------
-# Optional: Setup Xauthority (helps some X apps)
-# -------------------------
-touch $HOME/.Xauthority
-xauth generate $DISPLAY . trusted
-xauth add $DISPLAY . $(mcookie)
-
-# -------------------------
-# Wait until X server socket exists
-# -------------------------
-echo "[ℹ️] Waiting for X server socket..."
-MAX_WAIT=30  # max 30 seconds
-WAITED=0
-while [ ! -e /tmp/.X11-unix/X${DISPLAY#:} ]; do
-    sleep 0.5
-    WAITED=$((WAITED+1))
-    if [ $WAITED -ge $MAX_WAIT ]; then
-        echo "[❌] Timeout waiting for X server socket"
-        exit 1
-    fi
-done
-echo "[✅] X server is ready!"
+vncserver :1 -geometry 1280x800 -depth 24 -SecurityTypes None
+echo "[✅] VNC server started on :1"
 
 # -------------------------
 # Start noVNC
 # -------------------------
 echo "[ℹ️] Starting noVNC proxy..."
-${NO_VNC_HOME}/utils/novnc_proxy --vnc localhost:5901 --listen 8080 &
-echo "[✅] noVNC started on port 8080 (access via http://<your-domain>:8080)"
+cd /opt/noVNC
+/opt/noVNC/utils/websockify/run 6080 localhost:5901 --web /opt/noVNC &
+echo "[✅] noVNC started on port 6080"
 
 # -------------------------
-# Start Telegram listener (foreground)
+# Wait a few seconds for desktop
+# -------------------------
+sleep 5
+
+# -------------------------
+# Start Chrome in background
+# -------------------------
+echo "[ℹ️] Starting Chrome..."
+export DISPLAY=:1
+google-chrome-stable --no-sandbox --disable-dev-shm-usage --disable-gpu \
+  --user-data-dir=/home/dockuser/chrome-profile \
+  --start-maximized "https://pocketoption.com/login" &
+echo "[✅] Chrome started"
+
+# -------------------------
+# Start Telegram listener in foreground
 # -------------------------
 echo "[ℹ️] Starting Telegram listener..."
-exec python3 -u telegram_listener.py
-
-
-# -------------------------
-# Start core bot in loop
-# -------------------------
-while true; do
-    echo "[ℹ️] Starting core bot..."
-    python3 -u core.py || true
-    echo "[⚠️] Core bot exited unexpectedly. Restarting in 5 seconds..."
-    sleep 5
-done
+export DISPLAY=:1
+exec python3 -u /home/dockuser/telegram_listener.py
