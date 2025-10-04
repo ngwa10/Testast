@@ -22,11 +22,25 @@ vncserver $DISPLAY -geometry ${VNC_RESOLUTION} -depth 24 -SecurityTypes None
 echo "[✅] VNC server started on $DISPLAY with resolution ${VNC_RESOLUTION}"
 
 # -------------------------
+# Optional: Setup Xauthority (helps some X apps)
+# -------------------------
+touch $HOME/.Xauthority
+xauth generate $DISPLAY . trusted
+xauth add $DISPLAY . $(mcookie)
+
+# -------------------------
 # Wait until X server socket exists
 # -------------------------
 echo "[ℹ️] Waiting for X server socket..."
+MAX_WAIT=30  # max 30 seconds
+WAITED=0
 while [ ! -e /tmp/.X11-unix/X${DISPLAY#:} ]; do
     sleep 0.5
+    WAITED=$((WAITED+1))
+    if [ $WAITED -ge $MAX_WAIT ]; then
+        echo "[❌] Timeout waiting for X server socket"
+        exit 1
+    fi
 done
 echo "[✅] X server is ready!"
 
