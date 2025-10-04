@@ -81,7 +81,7 @@ WORKDIR /home/dockuser
 # -------------------------
 # Expose VNC and noVNC ports
 # -------------------------
-EXPOSE 5901 8080
+EXPOSE 5901 6080
 
 # -------------------------
 # Entrypoint
