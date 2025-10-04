@@ -2,74 +2,108 @@
 set -e
 
 # -------------------------
-# Environment
+# Environment variables
 # -------------------------
-export DISPLAY=:1
-export VNC_RESOLUTION=${VNC_RESOLUTION:-1280x800}
+export DISPLAY=${DISPLAY:-:1}
+export VNC_RESOLUTION=${VNC_RESOLUTION:-1024x600}
 export NO_VNC_HOME=${NO_VNC_HOME:-/opt/noVNC}
+
+echo "[ℹ️] Starting container with DISPLAY=$DISPLAY and RESOLUTION=$VNC_RESOLUTION"
 
 # -------------------------
 # Start virtual display (Xvfb)
 # -------------------------
 echo "[ℹ️] Starting Xvfb..."
-Xvfb :1 -screen 0 ${VNC_RESOLUTION}x24 &
+Xvfb $DISPLAY -screen 0 ${VNC_RESOLUTION}x24 &
 XVFB_PID=$!
 sleep 5
-echo "[✅] Xvfb started with DISPLAY=$DISPLAY (PID=$XVFB_PID)"
+echo "[✅] Xvfb started (PID: $XVFB_PID)"
 
 # -------------------------
-# Optional: start noVNC (if you need web access)
+# Start noVNC (optional but recommended)
 # -------------------------
 if [ -d "$NO_VNC_HOME" ]; then
-    echo "[ℹ️] Starting noVNC..."
+    echo "[ℹ️] Starting noVNC web interface..."
     ${NO_VNC_HOME}/utils/novnc_proxy --vnc localhost:5901 --listen 6080 &
-    echo "[✅] noVNC started on port 6080"
+    NOVNC_PID=$!
+    echo "[✅] noVNC started on port 6080 (PID: $NOVNC_PID)"
 fi
 
 # -------------------------
-# Launch Chrome as dockuser
+# Start VNC server
 # -------------------------
-echo "[ℹ️] Launching Chrome..."
+echo "[ℹ️] Starting TigerVNC server..."
+vncserver $DISPLAY -geometry ${VNC_RESOLUTION} -depth 24 &
+VNC_PID=$!
+sleep 5
+echo "[✅] VNC server started (PID: $VNC_PID)"
+
+# -------------------------
+# Launch Google Chrome (optimized flags)
+# -------------------------
+echo "[ℹ️] Launching Chrome browser..."
 google-chrome-stable \
     --no-sandbox \
     --disable-setuid-sandbox \
     --disable-gpu \
     --disable-dev-shm-usage \
-    --disable-blink-features=AutomationControlled \
+    --disable-software-rasterizer \
+    --disable-extensions \
+    --disable-background-networking \
+    --disable-sync \
+    --disable-component-update \
+    --disable-client-side-phishing-detection \
+    --single-process \
+    --no-first-run \
+    --no-default-browser-check \
     --user-data-dir=/home/dockuser/chrome-profile \
     --start-maximized \
     http://pocketoption.com/en/login/ &
 CHROME_PID=$!
-sleep 5
-echo "[✅] Chrome launched (PID=$CHROME_PID)"
+
+# Wait a bit longer for Chrome to fully initialize (important for memory stability)
+sleep 20
+echo "[✅] Chrome launched (PID: $CHROME_PID)"
 
 # -------------------------
-# Start Python scripts
+# Start Python background services (with staggered startup)
 # -------------------------
-echo "[ℹ️] Starting Python scripts..."
+echo "[ℹ️] Starting Python services..."
+
 python3 -u telegram_listener.py >> /home/dockuser/telegram.log 2>&1 &
+TL_PID=$!
+sleep 5
+
 python3 -u screen_logic.py >> /home/dockuser/screen_logic.log 2>&1 &
-echo "[✅] Python scripts started in background"
+SL_PID=$!
+sleep 5
+
+echo "[✅] Python background services started."
 
 # -------------------------
-# Start core bot loop
+# Run core bot with automatic restart loop
 # -------------------------
 while true; do
     echo "[ℹ️] Starting core bot..."
     python3 -u core.py >> /home/dockuser/core.log 2>&1
     EXIT_CODE=$?
     if [ $EXIT_CODE -ne 0 ]; then
-        echo "[⚠️] Core bot crashed with exit code $EXIT_CODE, restarting in 5s..."
+        echo "[⚠️] Core bot crashed with exit code $EXIT_CODE. Restarting in 5s..."
         sleep 5
     else
-        echo "[ℹ️] Core bot finished normally."
+        echo "[ℹ️] Core bot finished normally. Exiting loop."
         break
     fi
 done
 
 # -------------------------
-# Clean up on exit
+# Cleanup on exit
 # -------------------------
-echo "[ℹ️] Stopping Xvfb..."
+echo "[ℹ️] Stopping processes..."
+kill $CHROME_PID || true
+kill $TL_PID || true
+kill $SL_PID || true
+kill $VNC_PID || true
 kill $XVFB_PID || true
-echo "[✅] Done."
+[ -n "$NOVNC_PID" ] && kill $NOVNC_PID || true
+echo "[✅] All processes stopped. Container exiting."
