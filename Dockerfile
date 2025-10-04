@@ -13,11 +13,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-pip git unzip \
     xfce4 xfce4-terminal dbus dbus-x11 procps dos2unix \
     python3-tk python3-dev scrot xclip xsel \
-    xvfb x11-utils x11vnc pulseaudio alsa-utils \
+    xvfb x11-utils tigervnc-standalone-server pulseaudio alsa-utils \
     ffmpeg \
     libsm6 libxext6 libxrender-dev libglib2.0-0 \
     tesseract-ocr tesseract-ocr-eng \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
+
 
 # -------------------------
 # Install Google Chrome
