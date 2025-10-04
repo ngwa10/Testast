@@ -6,11 +6,29 @@ to shared.trade_manager.handle_command(...).
 Filename: Telegram listener..py
 """
 
-from telethon import TelegramClient, events
+import os
+import time
 import re
 from datetime import datetime, timedelta
 import logging
 import traceback
+
+# ---------------------------
+# Wait for X server to be ready
+# ---------------------------
+DISPLAY = os.environ.get("DISPLAY", ":1")
+X_SOCKET_PATH = f"/tmp/.X11-unix/X{DISPLAY[1:]}"  # e.g., /tmp/.X11-unix/X1
+
+MAX_WAIT = 30  # seconds
+waited = 0
+while not os.path.exists(X_SOCKET_PATH):
+    if waited >= MAX_WAIT:
+        raise RuntimeError(f"[❌] X server socket {X_SOCKET_PATH} not found after {MAX_WAIT}s")
+    logging.info(f"[ℹ️] Waiting for X server socket {X_SOCKET_PATH}...")
+    time.sleep(1)
+    waited += 1
+
+logging.info(f"[✅] X server socket {X_SOCKET_PATH} is ready")
 
 # Hard-coded credentials (keep as before)
 api_id = 29630724
@@ -241,30 +259,4 @@ def start_telegram_listener():
                         # last-resort: shared.trade_manager
                         if shared.trade_manager is not None:
                             shared.trade_manager.handle_signal(parsed)
-                            log_info("[🤖] Sent to shared.trade_manager.handle_signal")
-                        else:
-                            log_error("[⚠️] TradeManager not ready; signal queued or ignored (no queue active).")
-                except Exception as e:
-                    log_error(f"[❌] Error forwarding signal to core: {e}")
-                    log_error(traceback.format_exc())
-            else:
-                log_info("[ℹ️] Message ignored (not a valid signal).")
-
-        except Exception as e:
-            log_error(f"[❌] Error handling message: {e}\n{traceback.format_exc()}")
-
-    try:
-        log_info("[⚙️] Connecting to Telegram...")
-        client.start(bot_token=bot_token)
-        log_info("[✅] Connected to Telegram. Listening for messages...")
-        client.run_until_disconnected()
-    except Exception as e:
-        log_error(f"[❌] Telegram listener failed: {e}\n{traceback.format_exc()}")
-
-# ---------------------------
-# Entry point
-# ---------------------------
-if __name__ == "__main__":
-    log_info("[🚀] Telegram listener (integrated) script started.")
-    start_telegram_listener()
-            
+                            log_info("[🤖] Sent to shared.trade
