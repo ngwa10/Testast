@@ -52,11 +52,11 @@ ${NO_VNC_HOME}/utils/novnc_proxy --vnc localhost:5901 --listen 8080 &
 echo "[✅] noVNC started on port 8080 (access via http://<your-domain>:8080)"
 
 # -------------------------
-# Start Telegram listener
+# Start Telegram listener (foreground)
 # -------------------------
 echo "[ℹ️] Starting Telegram listener..."
-python3 -u telegram_listener.py &
-echo "[✅] Telegram listener started"
+exec python3 -u telegram_listener.py
+
 
 # -------------------------
 # Start core bot in loop
