@@ -1,3 +1,6 @@
+# -------------------------
+# Base image
+# -------------------------
 FROM ubuntu:22.04-slim
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -6,7 +9,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     NO_VNC_HOME=/opt/noVNC
 
 # -------------------------
-# Install core packages
+# Install system packages
 # -------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl wget ca-certificates gnupg2 software-properties-common \
@@ -77,6 +80,6 @@ WORKDIR /home/dockuser
 EXPOSE 5901 6080
 
 # -------------------------
-# Default entrypoint
+# Entrypoint
 # -------------------------
 ENTRYPOINT ["/usr/local/bin/start.sh"]
