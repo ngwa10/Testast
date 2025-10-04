@@ -1,7 +1,7 @@
 # -------------------------
 # Base image
 # -------------------------
-FROM ubuntu:22.04-slim
+FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
     DISPLAY=:1 \
@@ -62,14 +62,12 @@ RUN useradd -m -s /bin/bash -u 1000 dockuser \
     && mkdir -p /home/dockuser/.vnc /home/dockuser/chrome-profile
 
 # -------------------------
-# Copy bot files and startup scripts
+# Copy all repository files
 # -------------------------
-COPY start.sh start_debug.sh /usr/local/bin/
-RUN dos2unix /usr/local/bin/start.sh /usr/local/bin/start_debug.sh \
-    && chmod +x /usr/local/bin/start.sh /usr/local/bin/start_debug.sh
-
-COPY .env core.py screen_logic.py telegram_listener.py telegram_callbacks.py core_utils.py shared.py logs.json debug_core.py /home/dockuser/
-RUN chown -R dockuser:dockuser /home/dockuser
+COPY . /home/dockuser/
+RUN chown -R dockuser:dockuser /home/dockuser \
+    && find /home/dockuser -type f -name "*.sh" -exec dos2unix {} \; \
+    && chmod +x /home/dockuser/*.sh
 
 USER dockuser
 WORKDIR /home/dockuser
@@ -82,4 +80,4 @@ EXPOSE 5901 6080
 # -------------------------
 # Entrypoint
 # -------------------------
-ENTRYPOINT ["/usr/local/bin/start.sh"]
+ENTRYPOINT ["/home/dockuser/start.sh"]
