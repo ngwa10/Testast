@@ -38,17 +38,17 @@ sleep 5
 echo "[✅] Xvfb started (PID: $XVFB_PID)"
 
 # -------------------------
-# Start noVNC
+# Start noVNC web interface
 # -------------------------
 if [ -d "$NO_VNC_HOME" ]; then
     echo "[ℹ️] Starting noVNC web interface..."
-    ${NO_VNC_HOME}/utils/novnc_proxy --vnc localhost:5901 --listen 6080 &
+    ${NO_VNC_HOME}/utils/novnc_proxy --vnc localhost:5901 --listen 0.0.0.0:6080 &
     NOVNC_PID=$!
     echo "[✅] noVNC started on port 6080 (PID: $NOVNC_PID)"
 fi
 
 # -------------------------
-# Start VNC server
+# Start TigerVNC server
 # -------------------------
 echo "[ℹ️] Starting TigerVNC server..."
 vncserver $DISPLAY -geometry ${VNC_RESOLUTION} -depth 24 &
@@ -57,7 +57,7 @@ sleep 5
 echo "[✅] VNC server started (PID: $VNC_PID)"
 
 # -------------------------
-# Launch Chrome
+# Launch Google Chrome
 # -------------------------
 echo "[ℹ️] Launching Chrome browser..."
 google-chrome-stable \
@@ -83,7 +83,7 @@ sleep 20
 echo "[✅] Chrome launched (PID: $CHROME_PID)"
 
 # -------------------------
-# Start Python services
+# Start Python background services
 # -------------------------
 echo "[ℹ️] Starting Python services..."
 python3 -u telegram_listener.py >> /home/dockuser/telegram.log 2>&1 &
@@ -95,7 +95,7 @@ sleep 5
 echo "[✅] Python background services started."
 
 # -------------------------
-# Run core bot
+# Run core bot with automatic restart
 # -------------------------
 while true; do
     echo "[ℹ️] Starting core bot..."
@@ -111,7 +111,7 @@ while true; do
 done
 
 # -------------------------
-# Cleanup
+# Cleanup on exit
 # -------------------------
 echo "[ℹ️] Stopping processes..."
 kill $CHROME_PID || true
