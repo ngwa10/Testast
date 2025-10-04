@@ -15,7 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl wget ca-certificates gnupg2 software-properties-common \
     python3 python3-pip git unzip \
     tigervnc-standalone-server tigervnc-tools \
-    xfce4-session xfce4-panel xfce4-terminal dbus-x11 procps dos2unix \
+    xfce4-session xfce4-panel xfce4-terminal dbus dbus-x11 procps dos2unix \
     python3-tk python3-dev scrot xclip xsel \
     xvfb x11-utils x11vnc pulseaudio alsa-utils \
     ffmpeg \
