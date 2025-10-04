@@ -2,122 +2,38 @@
 set -e
 
 # -------------------------
-# Environment variables
+# Environment
 # -------------------------
-# Pick a free DISPLAY if not set
-if [ -z "$DISPLAY" ]; then
-    for i in {1..99}; do
-        if ! xdpyinfo -display :$i >/dev/null 2>&1; then
-            export DISPLAY=:$i
-            break
-        fi
-    done
-fi
-
-export VNC_RESOLUTION=${VNC_RESOLUTION:-1024x600}
-export NO_VNC_HOME=${NO_VNC_HOME:-/opt/noVNC}
-
-echo "[ℹ️] Starting container with DISPLAY=$DISPLAY and RESOLUTION=$VNC_RESOLUTION"
+export DISPLAY=:1
+export NO_VNC_HOME=/opt/noVNC
+export VNC_RESOLUTION=${VNC_RESOLUTION:-1280x800}
 
 # -------------------------
-# Start D-Bus (optional)
+# Start VNC server
 # -------------------------
-if [ ! -S /run/dbus/system_bus_socket ]; then
-    echo "[ℹ️] Starting dbus..."
-    mkdir -p /var/run/dbus
-    dbus-daemon --system --fork
-fi
+vncserver :1 -geometry ${VNC_RESOLUTION} -depth 24 -SecurityTypes None
+echo "[✅] VNC server started on :1 with resolution ${VNC_RESOLUTION} (passwordless)"
 
 # -------------------------
-# Start virtual display (Xvfb)
+# Start noVNC
 # -------------------------
-echo "[ℹ️] Starting Xvfb..."
-Xvfb $DISPLAY -screen 0 ${VNC_RESOLUTION}x24 &
-XVFB_PID=$!
+${NO_VNC_HOME}/utils/novnc_proxy --vnc localhost:5901 --listen 6080 &
+echo "[✅] noVNC started on port 6080"
+
 sleep 5
-echo "[✅] Xvfb started (PID: $XVFB_PID)"
 
 # -------------------------
-# Start x11vnc to expose Xvfb
+# Start Telegram listener
 # -------------------------
-echo "[ℹ️] Starting x11vnc..."
-x11vnc -display $DISPLAY -nopw -forever -shared -rfbport 5901 &
-VNC_PID=$!
-sleep 5
-echo "[✅] x11vnc started on port 5901 (PID: $VNC_PID)"
+python3 -u telegram_listener.py &
+echo "[ℹ️] Telegram listener started in background"
 
 # -------------------------
-# Start noVNC web interface
-# -------------------------
-if [ -d "$NO_VNC_HOME" ]; then
-    echo "[ℹ️] Starting noVNC web interface..."
-    ${NO_VNC_HOME}/utils/novnc_proxy --vnc localhost:5901 --listen 0.0.0.0:6080 &
-    NOVNC_PID=$!
-    echo "[✅] noVNC started on port 6080 (PID: $NOVNC_PID)"
-fi
-
-# -------------------------
-# Launch Google Chrome
-# -------------------------
-echo "[ℹ️] Launching Chrome browser..."
-google-chrome-stable \
-    --no-sandbox \
-    --disable-setuid-sandbox \
-    --disable-gpu \
-    --disable-dev-shm-usage \
-    --disable-software-rasterizer \
-    --disable-extensions \
-    --disable-background-networking \
-    --disable-sync \
-    --disable-component-update \
-    --disable-client-side-phishing-detection \
-    --single-process \
-    --no-first-run \
-    --no-default-browser-check \
-    --user-data-dir=/home/dockuser/chrome-profile \
-    --start-maximized \
-    http://pocketoption.com/en/login/ &
-CHROME_PID=$!
-
-sleep 20
-echo "[✅] Chrome launched (PID: $CHROME_PID)"
-
-# -------------------------
-# Start Python background services
-# -------------------------
-echo "[ℹ️] Starting Python services..."
-python3 -u telegram_listener.py >> /home/dockuser/telegram.log 2>&1 &
-TL_PID=$!
-sleep 5
-python3 -u screen_logic.py >> /home/dockuser/screen_logic.log 2>&1 &
-SL_PID=$!
-sleep 5
-echo "[✅] Python background services started."
-
-# -------------------------
-# Run core bot with automatic restart
+# Start core bot
 # -------------------------
 while true; do
     echo "[ℹ️] Starting core bot..."
-    python3 -u core.py >> /home/dockuser/core.log 2>&1
-    EXIT_CODE=$?
-    if [ $EXIT_CODE -ne 0 ]; then
-        echo "[⚠️] Core bot crashed with exit code $EXIT_CODE. Restarting in 5s..."
-        sleep 5
-    else
-        echo "[ℹ️] Core bot finished normally. Exiting loop."
-        break
-    fi
+    python3 -u core.py
+    echo "[⚠️] Core bot exited unexpectedly. Restarting in 5 seconds..."
+    sleep 5
 done
-
-# -------------------------
-# Cleanup on exit
-# -------------------------
-echo "[ℹ️] Stopping processes..."
-kill $CHROME_PID || true
-kill $TL_PID || true
-kill $SL_PID || true
-kill $VNC_PID || true
-kill $XVFB_PID || true
-[ -n "$NOVNC_PID" ] && kill $NOVNC_PID || true
-echo "[✅] All processes stopped. Container exiting."
