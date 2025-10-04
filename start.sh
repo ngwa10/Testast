@@ -4,11 +4,29 @@ set -e
 # -------------------------
 # Environment variables
 # -------------------------
-export DISPLAY=${DISPLAY:-:1}
+# Pick a free DISPLAY if not set
+if [ -z "$DISPLAY" ]; then
+    for i in {1..99}; do
+        if ! xdpyinfo -display :$i >/dev/null 2>&1; then
+            export DISPLAY=:$i
+            break
+        fi
+    done
+fi
+
 export VNC_RESOLUTION=${VNC_RESOLUTION:-1024x600}
 export NO_VNC_HOME=${NO_VNC_HOME:-/opt/noVNC}
 
 echo "[ℹ️] Starting container with DISPLAY=$DISPLAY and RESOLUTION=$VNC_RESOLUTION"
+
+# -------------------------
+# Start D-Bus (optional)
+# -------------------------
+if [ ! -S /run/dbus/system_bus_socket ]; then
+    echo "[ℹ️] Starting dbus..."
+    mkdir -p /var/run/dbus
+    dbus-daemon --system --fork
+fi
 
 # -------------------------
 # Start virtual display (Xvfb)
@@ -20,7 +38,7 @@ sleep 5
 echo "[✅] Xvfb started (PID: $XVFB_PID)"
 
 # -------------------------
-# Start noVNC (optional but recommended)
+# Start noVNC
 # -------------------------
 if [ -d "$NO_VNC_HOME" ]; then
     echo "[ℹ️] Starting noVNC web interface..."
@@ -39,7 +57,7 @@ sleep 5
 echo "[✅] VNC server started (PID: $VNC_PID)"
 
 # -------------------------
-# Launch Google Chrome (optimized flags)
+# Launch Chrome
 # -------------------------
 echo "[ℹ️] Launching Chrome browser..."
 google-chrome-stable \
@@ -61,27 +79,23 @@ google-chrome-stable \
     http://pocketoption.com/en/login/ &
 CHROME_PID=$!
 
-# Wait a bit longer for Chrome to fully initialize (important for memory stability)
 sleep 20
 echo "[✅] Chrome launched (PID: $CHROME_PID)"
 
 # -------------------------
-# Start Python background services (with staggered startup)
+# Start Python services
 # -------------------------
 echo "[ℹ️] Starting Python services..."
-
 python3 -u telegram_listener.py >> /home/dockuser/telegram.log 2>&1 &
 TL_PID=$!
 sleep 5
-
 python3 -u screen_logic.py >> /home/dockuser/screen_logic.log 2>&1 &
 SL_PID=$!
 sleep 5
-
 echo "[✅] Python background services started."
 
 # -------------------------
-# Run core bot with automatic restart loop
+# Run core bot
 # -------------------------
 while true; do
     echo "[ℹ️] Starting core bot..."
@@ -97,7 +111,7 @@ while true; do
 done
 
 # -------------------------
-# Cleanup on exit
+# Cleanup
 # -------------------------
 echo "[ℹ️] Stopping processes..."
 kill $CHROME_PID || true
