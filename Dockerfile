@@ -6,15 +6,15 @@ ENV DEBIAN_FRONTEND=noninteractive \
     NO_VNC_HOME=/opt/noVNC
 
 # -------------------------
-# Install system packages
+# Install system packages + VNC
 # -------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl wget ca-certificates gnupg2 software-properties-common \
     python3 python3-pip git unzip \
     xfce4 xfce4-terminal dbus dbus-x11 procps dos2unix \
     python3-tk python3-dev scrot xclip xsel \
-    xvfb x11-utils x11vnc pulseaudio alsa-utils \
-    ffmpeg \
+    xvfb x11-utils tigervnc-standalone-server tigervnc-common \
+    pulseaudio alsa-utils ffmpeg \
     libsm6 libxext6 libxrender-dev libglib2.0-0 \
     tesseract-ocr tesseract-ocr-eng \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
@@ -54,24 +54,22 @@ RUN git clone --depth 1 --branch v1.4.0 https://github.com/novnc/noVNC.git ${NO_
 # -------------------------
 # Create non-root user
 # -------------------------
-RUN useradd -m -s /bin/bash -u 1000 dockuser \
-    && mkdir -p /home/dockuser/.vnc /home/dockuser/chrome-profile
+RUN useradd -m -s /bin/bash -u 1000 dockuser
 
 # -------------------------
 # Configure VNC xstartup for XFCE
 # -------------------------
-RUN echo '#!/bin/bash\nxrdb $HOME/.Xresources\nstartxfce4 &' > /home/dockuser/.vnc/xstartup \
-    && chmod +x /home/dockuser/.vnc/xstartup
+USER dockuser
+RUN mkdir -p /home/dockuser/.vnc && \
+    echo '#!/bin/bash\nxrdb $HOME/.Xresources\nstartxfce4 &' > /home/dockuser/.vnc/xstartup && \
+    chmod +x /home/dockuser/.vnc/xstartup
 
 # -------------------------
 # Copy project files
 # -------------------------
 COPY . /home/dockuser/
-RUN chown -R dockuser:dockuser /home/dockuser \
-    && find /home/dockuser -type f -name "*.sh" -exec dos2unix {} \; \
-    && chmod +x /home/dockuser/*.sh
+RUN find /home/dockuser -type f -name "*.sh" -exec dos2unix {} \; && chmod +x /home/dockuser/*.sh
 
-USER dockuser
 WORKDIR /home/dockuser
 
 # -------------------------
