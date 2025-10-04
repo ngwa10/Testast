@@ -38,6 +38,15 @@ sleep 5
 echo "[✅] Xvfb started (PID: $XVFB_PID)"
 
 # -------------------------
+# Start x11vnc to expose Xvfb
+# -------------------------
+echo "[ℹ️] Starting x11vnc..."
+x11vnc -display $DISPLAY -nopw -forever -shared -rfbport 5901 &
+VNC_PID=$!
+sleep 5
+echo "[✅] x11vnc started on port 5901 (PID: $VNC_PID)"
+
+# -------------------------
 # Start noVNC web interface
 # -------------------------
 if [ -d "$NO_VNC_HOME" ]; then
@@ -46,15 +55,6 @@ if [ -d "$NO_VNC_HOME" ]; then
     NOVNC_PID=$!
     echo "[✅] noVNC started on port 6080 (PID: $NOVNC_PID)"
 fi
-
-# -------------------------
-# Start TigerVNC server
-# -------------------------
-echo "[ℹ️] Starting TigerVNC server..."
-vncserver $DISPLAY -geometry ${VNC_RESOLUTION} -depth 24 &
-VNC_PID=$!
-sleep 5
-echo "[✅] VNC server started (PID: $VNC_PID)"
 
 # -------------------------
 # Launch Google Chrome
