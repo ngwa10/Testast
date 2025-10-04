@@ -1,11 +1,8 @@
-# -------------------------
-# Base image
-# -------------------------
 FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
     DISPLAY=:1 \
-    VNC_RESOLUTION=1024x600 \
+    VNC_RESOLUTION=1280x800 \
     NO_VNC_HOME=/opt/noVNC
 
 # -------------------------
@@ -61,7 +58,13 @@ RUN useradd -m -s /bin/bash -u 1000 dockuser \
     && mkdir -p /home/dockuser/.vnc /home/dockuser/chrome-profile
 
 # -------------------------
-# Copy all repository files
+# Configure VNC xstartup for XFCE
+# -------------------------
+RUN echo '#!/bin/bash\nxrdb $HOME/.Xresources\nstartxfce4 &' > /home/dockuser/.vnc/xstartup \
+    && chmod +x /home/dockuser/.vnc/xstartup
+
+# -------------------------
+# Copy project files
 # -------------------------
 COPY . /home/dockuser/
 RUN chown -R dockuser:dockuser /home/dockuser \
@@ -74,7 +77,7 @@ WORKDIR /home/dockuser
 # -------------------------
 # Expose VNC and noVNC ports
 # -------------------------
-EXPOSE 5901 6080
+EXPOSE 5901 8080
 
 # -------------------------
 # Entrypoint
