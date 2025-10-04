@@ -16,6 +16,9 @@ import traceback
 # ---------------------------
 # Wait for X server to be ready
 # ---------------------------
+# ---------------------------
+# Wait for X server to be ready
+# ---------------------------
 DISPLAY = os.environ.get("DISPLAY", ":1")
 X_SOCKET_PATH = f"/tmp/.X11-unix/X{DISPLAY[1:]}"  # e.g., /tmp/.X11-unix/X1
 
@@ -29,6 +32,7 @@ while not os.path.exists(X_SOCKET_PATH):
     waited += 1
 
 logging.info(f"[✅] X server socket {X_SOCKET_PATH} is ready")
+
 
 # Hard-coded credentials (keep as before)
 api_id = 29630724
