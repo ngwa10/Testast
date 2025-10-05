@@ -56,6 +56,11 @@ RUN dos2unix /usr/local/bin/start.sh && chmod +x /usr/local/bin/start.sh
 COPY core.py /home/dockuser/core.py
 RUN chown dockuser:dockuser /home/dockuser/core.py
 
+
+# Copy core_utils.py
+COPY core_utils.py /home/dockuser/core_utils.py
+RUN chown dockuser:dockuser /home/dockuser/core_utils.py
+
 # Copy shared 
 COPY shared.py /home/dockuser/shared.py
 RUN chown dockuser:dockuser /home/dockuser/shared.py
