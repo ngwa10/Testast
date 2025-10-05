@@ -11,9 +11,9 @@ import random
 import uuid
 from datetime import datetime
 from typing import Optional
-import time 
+import time
 import os
-import shared  # 👈 shared singleton
+import shared # 👈 shared singleton
 
 # Lazy import helper
 pyautogui = get_pyautogui()
