@@ -1,0 +1,48 @@
+#!/bin/bash
+set -e
+
+# -------------------------
+# Environment
+# -------------------------
+export DISPLAY=:1
+export NO_VNC_HOME=/opt/noVNC
+export VNC_RESOLUTION=${VNC_RESOLUTION:-1280x800}
+
+# -------------------------
+# Start VNC server
+# -------------------------
+vncserver :1 -geometry ${VNC_RESOLUTION} -depth 24 -SecurityTypes None
+echo "[✅] VNC server started on :1 with resolution ${VNC_RESOLUTION} (passwordless)"
+
+# -------------------------
+# Start noVNC
+# -------------------------
+${NO_VNC_HOME}/utils/novnc_proxy --vnc localhost:5901 --listen 6080 &
+echo "[✅] noVNC started on port 6080"
+
+# -------------------------
+# Wait a few seconds for display to be ready
+# -------------------------
+sleep 5
+
+# -------------------------
+# Start Telegram listener
+# -------------------------
+python3 -u telegram_listener.py &
+echo "[ℹ️] Telegram listener started in background"
+
+# -------------------------
+# Start core bot with dashboard detection
+# -------------------------
+while true; do
+    echo "[ℹ️] Starting core bot (debug mode)..."
+    python3 -u debug_core.py
+    exit_code=$?
+    if [ $exit_code -ne 0 ]; then
+        echo "[⚠️] Core bot exited unexpectedly with code $exit_code. Restarting in 5 seconds..."
+        sleep 5
+    else
+        echo "[ℹ️] Core bot finished normally."
+        break
+    fi
+done

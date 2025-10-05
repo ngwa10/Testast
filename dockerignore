@@ -1,0 +1,9 @@
+# Ignore local files not needed in the image
+.git
+.gitignore
+.vscode
+node_modules
+__pycache__
+*.log
+*.md
+README.md
