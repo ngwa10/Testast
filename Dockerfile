@@ -56,6 +56,10 @@ RUN dos2unix /usr/local/bin/start.sh && chmod +x /usr/local/bin/start.sh
 COPY core.py /home/dockuser/core.py
 RUN chown dockuser:dockuser /home/dockuser/core.py
 
+# Copy shared 
+COPY shared.py /home/dockuser/shared.py
+RUN chown dockuser:dockuser /home/dockuser/shared.py
+
 # Copy Telegram scripts
 COPY telegram_listener.py /home/dockuser/telegram_listener.py
 RUN chown dockuser:dockuser /home/dockuser/telegram_listener.py
