@@ -58,8 +58,7 @@ RUN chown dockuser:dockuser /home/dockuser/core.py
 
 # Copy Telegram scripts
 COPY telegram_listener.py /home/dockuser/telegram_listener.py
-COPY telegram_callbacks.py /home/dockuser/telegram_callbacks.py
-RUN chown dockuser:dockuser /home/dockuser/telegram_listener.py /home/dockuser/telegram_callbacks.py
+RUN chown dockuser:dockuser /home/dockuser/telegram_listener.py
 
 EXPOSE 5901 6080
 
