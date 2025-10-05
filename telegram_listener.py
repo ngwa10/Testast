@@ -1,344 +1,269 @@
-# core.py
 """
-Core trading logic (hotkey-driven, personality logs)
+Telegram listener with integrated parsing + timezone handling.
+Forwards signals directly to core.signal_callback(...) and commands
+to core.handle_command(...) with robust TradeManager readiness wait.
+
+Filename: telegram_listener.py
 """
 
-import json
+from telethon import TelegramClient, events
+import re
+from datetime import datetime, timedelta
 import logging
-import threading
+import traceback
 import time
-import random
-import uuid
-from datetime import datetime
-from typing import Optional
-import time
-import os
-import shared # 👈 shared singleton
 
-# Lazy import helper
-pyautogui = get_pyautogui()
-    import importlib
-    if not os.environ.get("DISPLAY"):
-        os.environ["DISPLAY"] = ":1"
-    # ✅ Wait until DISPLAY socket is available (VNC started)
-    for _ in range(20):  # ~20s max
-        if os.path.exists("/tmp/.X11-unix/X1"):
-            break
-        print("[ℹ️] Waiting for X11 display to become ready...")
-        time.sleep(1)
-    return importlib.import_module("pyautogui")
+# Hard-coded credentials (keep as before)
+api_id = 29630724
+api_hash = "8e12421a95fd722246e0c0b194fd3e0c"
+bot_token = "8477806088:AAGEXpIAwN5tNQM0hsCGqP-otpLJjPJLmWA"
+TARGET_CHAT_ID = -1003033183667  # Numeric channel ID
 
-# Replace this line ↓
-# import pyautogui
-pyautogui
- = get_pyautogui()
-
-# ---------------------------
-# Configuration
-# ---------------------------
-TIMEFRAME_SECONDS = {
-    "M1": 60,
-    "M5": 300,
-    "M15": 900,
-    "M30": 1800,
-    "H1": 3600
-}
-EXPIRY_BUFFER_SECONDS = 5
-pyautogui.FAILSAFE = False
-
-# ---------------------------
-# Logging
-# ---------------------------
+# Logging setup (matches your style)
 logging.basicConfig(
-    level=logging.INFO,
-    format='[%(asctime)s] %(levelname)s: %(message)s',
-    datefmt='%H:%M:%S'
+    level=logging.INFO,
+    format='[%(asctime)s] %(levelname)s: %(message)s',
+    datefmt='%H:%M:%S'
 )
-logger = logging.getLogger("core")
+logger = logging.getLogger("telegram_listener")
 
-# ---------------------------
-# Load personality logs
-# ---------------------------
+def log_info(msg):
+    logger.info(msg)
+    for h in logger.handlers:
+        try:
+            h.flush()
+        except Exception:
+            pass
+
+def log_error(msg):
+    logger.error(msg)
+    for h in logger.handlers:
+        try:
+            h.flush()
+        except Exception:
+            pass
+
+# Import core and shared so we can forward signals and commands
 try:
-    with open("logs.json", "r", encoding="utf-8") as f:
-        LOG_BUCKETS = json.load(f)
+    import core
+    import shared
 except Exception as e:
-    logger.warning(f"[⚠️] Failed to load logs.json: {e}. Using minimal defaults.")
-    LOG_BUCKETS = {
-        "idle_logs": ["Precision is idling."],
-        "pre_trade_logs": ["Precision preparing trade."],
-        "firing_logs": ["Precision firing."],
-        "martingale_logs": ["Martingale engaged."],
-        "win_logs": ["Win!"],
-        "loss_logs": ["Loss."],
-        "praise_desmond": ["Desmond is great."],
-        "roast_others": ["Look at others."],
-        "questions": ["What's next?"]
-    }
+    log_error(f"[❌] Failed to import core/shared: {e}")
+    raise
 
-def _random_log(category: str) -> str:
-    bucket = LOG_BUCKETS.get(category, None)
-    if not bucket:
-        return ""
-    return random.choice(bucket)
+# Try to import timezone_convert from core_utils if available
+try:
+    from core_utils import timezone_convert
+except Exception:
+    timezone_convert = None
+    log_error("[⚠️] core_utils.timezone_convert not found, signals will use local/naive conversion fallback")
 
 # ---------------------------
-# Thread-safe registries
+# Signal parsing (full logic from your previous code)
 # ---------------------------
-_registry_lock = threading.RLock()
-_pending_trades = {}
-_active_groups = {}
+def parse_signal(message_text: str):
+    """
+    Parses the message_text for various signal formats (Anna, OTC, Precision).
+    Returns a dict with keys:
+      currency_pair, direction, entry_time (datetime tz-aware if timezone_convert used),
+      timeframe, martingale_times (list of datetimes), source
+    or returns None if the message doesn't contain a valid signal.
+    """
+    try:
+        result = {
+            "currency_pair": None,
+            "direction": None,
+            "entry_time": None,
+            "timeframe": None,
+            "martingale_times": [],
+            "source": "OTC-3"
+        }
 
-# ---------------------------
-# Utilities
-# ---------------------------
-def _tf_to_seconds(tf: str) -> int:
-    if not tf:
-        return 60
-    return TIMEFRAME_SECONDS.get(tf.strip().upper(), 60)
+        # quick filter
+        if not re.search(r'(BUY|SELL|CALL|PUT|🔼|🟥|🟩|🔽|✅ ANNA SIGNALS ✅|_OTC)', message_text, re.IGNORECASE):
+            return None
 
-def _normalize_currency(pair: str) -> str:
-    if not pair:
-        return ""
-    return pair.replace("/", "").replace(" ", "").upper()
+        is_anna_signal = "anna signals" in message_text.lower()
+        clean_text = re.sub(r'[^\x00-\x7F]+', ' ', message_text)  # remove non-ascii emojis for some regexes
 
-# ---------------------------
-# Trade Manager
-# ---------------------------
-class TradeManager:
-    def __init__(self, max_martingale: int = 3):
-        self.max_martingale = max_martingale
-        pyautogui.FAILSAFE = False
-        logger.info("[ℹ️] TradeManager initialized.")
-        logger.info(_random_log("idle_logs"))
+        # Currency Pair
+        pair_match = re.search(r'([A-Z]{3}/[A-Z]{3})(?:[\s_\-]?OTC)?', clean_text, re.IGNORECASE)
+        if pair_match:
+            result['currency_pair'] = pair_match.group(1).strip().upper()
 
-    def handle_signal(self, signal: dict):
-        try:
-            currency_raw = signal.get("currency_pair")
-            direction = (signal.get("direction") or "BUY").upper()
-            entry_time = signal.get("entry_time")
-            mg_times = signal.get("martingale_times", []) or []
-            timeframe = (signal.get("timeframe") or "M1").upper()
+        # Direction
+        direction_match = re.search(r'(BUY|SELL|CALL|PUT|🔼|🟥|🟩|🔽|⏺ BUY|⏺ SELL)', message_text, re.IGNORECASE)
+        if direction_match:
+            direction = direction_match.group(1).upper()
+            if direction in ['CALL', 'BUY', '🟩', '🔼', '⏺ BUY']:
+                result['direction'] = 'BUY'
+            elif direction in ['PUT', 'SELL', '🔽', '🟥', '⏺ SELL']:
+                result['direction'] = 'SELL'
 
-            if not currency_raw or not isinstance(entry_time, datetime) or entry_time.tzinfo is None:
-                logger.warning("[⚠️] Invalid signal: missing currency or timezone-aware entry_time.")
-                return
+        # Source detection (keeps your mapping)
+        source = "OTC-3"
+        if "💥 GET THIS SIGNAL HERE!" in message_text:
+            source = "UTC-4"
+        elif "💥 TRADE WITH DESMOND!" in message_text:
+            source = "Cameroon"
+        result['source'] = source
 
-            currency = _normalize_currency(currency_raw)
-            group_id = f"{currency}_{entry_time.isoformat()}_{uuid.uuid4().hex[:8]}"
+        # Entry Time (various labels)
+        entry_time_match = re.search(
+            r'(?:Entry Time:|Entry at|TIME \(UTC.*\):|⏺ Entry at|Entry:)\s*(\d{2}:\d{2})',
+            message_text, re.IGNORECASE
+        )
+        if entry_time_match:
+            entry_time_str = entry_time_match.group(1)
+            # Prefer using timezone_convert if available
+            if timezone_convert:
+                converted = timezone_convert(entry_time_str, source)
+                if not converted:
+                    log_info(f"[⚠️] Signal entry time {entry_time_str} appears to already have passed or is invalid; skipping.")
+                    return None
+                result['entry_time'] = converted
+            else:
+                # naive fallback: create a datetime in UTC by parsing HH:MM as UTC today
+                try:
+                    hh, mm = map(int, entry_time_str.split(":"))
+                    now = datetime.utcnow()
+                    entry_dt = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+                    # attach UTC tzinfo so downstream expects tz-aware whenever timezone_convert used
+                    try:
+                        import pytz
+                        entry_dt = pytz.UTC.localize(entry_dt)
+                    except Exception:
+                        pass
+                    result['entry_time'] = entry_dt
+                except Exception:
+                    log_error(f"[❌] Failed naïve parse of entry_time '{entry_time_str}'")
+                    return None
 
-            with _registry_lock:
-                _active_groups[group_id] = {"stopped": False, "signal": signal}
+        # Timeframe
+        timeframe_match = re.search(r'Expiration:?\s*(M1|M5|1 Minute|5 Minute|5M|1M|5-minute)', message_text, re.IGNORECASE)
+        if timeframe_match:
+            tf = timeframe_match.group(1).lower()
+            result['timeframe'] = 'M1' if '1' in tf else 'M5'
+        if not result['timeframe']:
+            result['timeframe'] = 'M1' if is_anna_signal else 'M5'
 
-            logger.info(f"[📩] Signal received for {currency_raw} ({direction}) at {entry_time.strftime('%H:%M:%S')} — scheduling (group={group_id})")
-            logger.info(_random_log("pre_trade_logs"))
+        # Martingale times extraction (many formats)
+        martingale_matches = re.findall(
+            r'(?:Level \d+|level(?: at)?|PROTECTION|level At|level|ª PROTECTION)\D*[:\-\—>]*\s*(\d{2}:\d{2})',
+            message_text, re.IGNORECASE
+        )
+        mg_times = []
+        for t in martingale_matches:
+            if timezone_convert and result.get('source'):
+                converted = timezone_convert(t, result['source'])
+                if converted:
+                    mg_times.append(converted)
+            else:
+                # naive fallback (UTC)
+                try:
+                    hh, mm = map(int, t.split(":"))
+                    now = datetime.utcnow()
+                    mg_dt = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+                    try:
+                        import pytz
+                        mg_dt = pytz.UTC.localize(mg_dt)
+                    except Exception:
+                        pass
+                    mg_times.append(mg_dt)
+                except Exception:
+                    log_error(f"[⚠️] Failed naive parse of martingale time '{t}'")
+        result['martingale_times'] = mg_times
 
-            # Fire-and-forget screen logic
-            try:
-                import screen_logic
-                try:
-                    screen_logic.select_currency(currency, timeframe)
-                except TypeError:
-                    screen_logic.select_currency(currency)
-                logger.info(f"[🛰️] Instructed screen_logic to select {currency}/{timeframe}")
-            except Exception:
-                logger.info(f"[🛰️] screen_logic not available; continuing.")
+        # If Anna signals and no martingale times found, create defaults (+1m, +2m)
+        if is_anna_signal and not result['martingale_times'] and result['entry_time']:
+            interval = timedelta(minutes=1)
+            first_mg = result['entry_time'] + interval
+            second_mg = first_mg + interval
+            result['martingale_times'] = [first_mg, second_mg]
+            log_info(f"[🔁] Default Anna martingale times applied: {[t.strftime('%H:%M') for t in result['martingale_times']]}")
 
-            # Schedule base trade
-            self._schedule_trade(entry_time, currency, direction, timeframe, group_id, martingale_level=0)
+        # Final sanity check
+        if not result['currency_pair'] or not result['direction'] or not result['entry_time']:
+            return None
 
-            # Schedule martingales
-            for idx, mg_time in enumerate(mg_times):
-                level = idx + 1
-                if level > self.max_martingale:
-                    logger.warning(f"[⚠️] Martingale time at level {level} exceeds max; skipping.")
-                    break
-                self._schedule_trade(mg_time, currency, direction, timeframe, group_id, martingale_level=level)
+        return result
 
-        except Exception as e:
-            logger.exception(f"[❌] handle_signal unexpected error: {e}")
-
-    # ---- schedule trade ----
-    def _schedule_trade(self, when, currency, direction, timeframe, group_id, martingale_level):
-        trade_id = f"{currency}_{when.strftime('%H%M%S')}_{martingale_level}_{uuid.uuid4().hex[:6]}"
-        thread = threading.Thread(target=self._trade_worker,
-                                  args=(trade_id, when, currency, direction, timeframe, group_id, martingale_level),
-                                  daemon=True)
-        thread.start()
-        logger.info(f"[🗓️] Scheduled trade id={trade_id} level={martingale_level} at {when.strftime('%H:%M:%S')} (group={group_id})")
-
-    # ---- worker ----
-    def _trade_worker(self, trade_id, when, currency, direction, timeframe, group_id, martingale_level):
-        try:
-            now = datetime.now(when.tzinfo)
-            delay = (when - now).total_seconds()
-            if delay > 0:
-                logger.info(f"[⏱️] Trade {trade_id}: waiting {delay:.1f}s until entry (level={martingale_level})")
-                time.sleep(delay)
-        except Exception:
-            pass
-
-        with _registry_lock:
-            grp = _active_groups.get(group_id)
-            if not grp or grp.get("stopped"):
-                logger.info(f"[⏹️] Trade {trade_id}: group stopped before entry; skipping.")
-                return
-
-        event = threading.Event()
-        placed_at = datetime.now(when.tzinfo)
-        trade_info = {
-            "id": trade_id,
-            "currency": currency,
-            "direction": direction,
-            "timeframe": timeframe,
-            "group_id": group_id,
-            "martingale_level": martingale_level,
-            "placed_at": placed_at,
-            "result": None,
-            "event": event
-        }
-
-        with _registry_lock:
-            _pending_trades[trade_id] = trade_info
-
-        logger.info(_random_log("firing_logs"))
-
-        # send hotkey
-        try:
-            if direction.upper() == "BUY":
-                pyautogui.hotkey("shift", "w")
-            else:
-                pyautogui.hotkey("shift", "s")
-            logger.info(f"[🎯] Trade {trade_id}: main-hotkey sent ({direction}) at {placed_at.strftime('%H:%M:%S')} level={martingale_level}")
-        except Exception as e:
-            logger.error(f"[❌] Trade {trade_id}: failed main-hotkey: {e}")
-
-        # increase trade amount ONCE
-        if martingale_level <= self.max_martingale:
-            inc_delay = random.randint(2, 40)
-            logger.info(f"[⌛] Trade {trade_id}: waiting {inc_delay}s before increase-hotkey (level={martingale_level})")
-            time.sleep(inc_delay)
-            try:
-                logger.info(_random_log("martingale_logs"))
-                pyautogui.hotkey("shift", "d")
-                logger.info(f"[📈] Trade {trade_id}: increase-hotkey sent (level={martingale_level})")
-            except Exception as e:
-                logger.error(f"[❌] Trade {trade_id}: failed increase-hotkey: {e}")
-
-        # wait for result
-        expiry_seconds = _tf_to_seconds(timeframe)
-        wait_timeout = expiry_seconds + 5
-        got_result = event.wait(timeout=wait_timeout)
-
-        if got_result:
-            with _registry_lock:
-                info = _pending_trades.get(trade_id)
-            result_text = info.get("result") if info else None
-            logger.info(f"[📣] Trade {trade_id}: result received -> {result_text}")
-            if result_text and result_text.strip().upper().startswith("WIN"):
-                logger.info(_random_log("win_logs"))
-                logger.info(f"[✅] Trade {trade_id} WIN — stopping martingale chain for group {group_id}")
-                with _registry_lock:
-                    grp = _active_groups.get(group_id)
-                    if grp is not None:
-                        grp["stopped"] = True
-                    _pending_trades.pop(trade_id, None)
-                return
-            else:
-                logger.info(_random_log("loss_logs"))
-                logger.info(f"[↪️] Trade {trade_id} LOSS/OTHER — continuing to next martingale.")
-                with _registry_lock:
-                    _pending_trades.pop(trade_id, None)
-                return
-        else:
-            logger.warning(f"[❌] Trade {trade_id}: NO RESULT received within expiry. Stopping group {group_id}.")
-            logger.info(_random_log("loss_logs"))
-            with _registry_lock:
-                grp = _active_groups.get(group_id)
-                if grp:
-                    grp["stopped"] = True
-                _pending_trades.pop(trade_id, None)
-            return
-
-    # ---- result API ----
-    def _set_result_for_id(self, trade_id: str, result_text: str):
-        with _registry_lock:
-            info = _pending_trades.get(trade_id)
-            if not info:
-                logger.info(f"[ℹ️] Received result for unknown trade_id={trade_id}: {result_text}")
-                return False
-            info["result"] = result_text
-            info["event"].set()
-            return True
-
-    def trade_result_received(self, trade_id: Optional[str], result_text: str):
-        try:
-            rt = (result_text or "").strip()
-            logger.info(f"[🛰️] trade_result_received called -> {trade_id=} {rt}")
-            if trade_id:
-                ok = self._set_result_for_id(trade_id, rt)
-                if ok:
-                    return
-            with _registry_lock:
-                if not _pending_trades:
-                    return
-                latest_id = max(_pending_trades, key=lambda k: _pending_trades[k]["placed_at"])
-            self._set_result_for_id(latest_id, rt)
-        except Exception as e:
-            logger.exception(f"[❌] trade_result_received error: {e}")
-
-    def handle_trade_result(self, status: str, amount: Optional[float] = None, trade_id: Optional[str] = None):
-        try:
-            txt = status
-            if amount is not None:
-                txt = f"{status} {amount:+g}"
-            self.trade_result_received(trade_id, txt)
-        except Exception as e:
-            logger.exception(f"[❌] handle_trade_result error: {e}")
-
-    # ---- handle Telegram /start and /stop ----
-    def handle_command(self, cmd: str):
-        """
-        Handles commands like /start and /stop without breaking the core logic.
-        """
-        try:
-            if cmd.startswith("/start"):
-                logger.info("[✅] Trading started (command received)")
-                # Optional: self.enabled = True
-            elif cmd.startswith("/stop"):
-                logger.info("[🛑] Trading stopped (command received)")
-                # Optional: self.enabled = False
-            else:
-                logger.info(f"[ℹ️] Unknown command received: {cmd}")
-        except Exception as e:
-            logger.exception(f"[❌] handle_command error: {e}")
+    except Exception as e:
+        tb = traceback.format_exc()
+        log_error(f"[❌] Error parsing signal: {e}\n{tb}")
+        return None
 
 # ---------------------------
-# Create singleton in shared
+# Robust callback logic (from telegram_listener_callback.py) for signals and commands
 # ---------------------------
-shared.trade_manager = TradeManager(max_martingale=3)
+def wait_for_trademanager_ready(max_wait_sec=10):
+    waited = 0
+    while getattr(shared, "trade_manager", None) is None and waited < max_wait_sec:
+        log_info("[⏳] Waiting for TradeManager to initialize...")
+        time.sleep(0.5)
+        waited += 0.5
+    return getattr(shared, "trade_manager", None) is not None
+
+def robust_signal_callback(signal, max_wait_sec=10):
+    if not wait_for_trademanager_ready(max_wait_sec):
+        log_error("[⚠️] TradeManager not ready after waiting; signal ignored.")
+        return
+    try:
+        core.signal_callback(signal)
+        log_info(f"[🤖] Signal forwarded to core.signal_callback: {signal.get('currency_pair')} at {signal.get('entry_time')}")
+    except Exception as e:
+        log_error(f"[❌] Failed to process signal: {e}")
+
+def robust_command_callback(cmd, max_wait_sec=10):
+    if not wait_for_trademanager_ready(max_wait_sec):
+        log_error("[⚠️] TradeManager not ready after waiting; command ignored.")
+        return
+    try:
+        core.handle_command(cmd)
+        log_info(f"[🤖] Command processed: {cmd}")
+    except Exception as e:
+        log_error(f"[❌] Failed to process command: {e}")
 
 # ---------------------------
-# Public API
+# Telegram listener and forwarding
 # ---------------------------
-def signal_callback(signal: dict):
-    shared.trade_manager.handle_signal(signal)
+def start_telegram_listener():
+    log_info("[🔌] Starting Telegram listener (integrated) ...")
+    client = TelegramClient('bot_session', api_id, api_hash)
 
-def trade_result_received(trade_id: Optional[str], result_text: str):
-    shared.trade_manager.trade_result_received(trade_id, result_text)
+    @client.on(events.NewMessage(chats=TARGET_CHAT_ID))
+    async def handler(event):
+        try:
+            text = event.message.message or ""
+            # Commands
+            if text.startswith("/start") or text.startswith("/stop"):
+                log_info(f"[💻] Command detected: {text}")
+                robust_command_callback(text)
+                return
 
-def handle_trade_result(status: str, amount: Optional[float] = None, trade_id: Optional[str] = None):
-    shared.trade_manager.handle_trade_result(status, amount, trade_id)
+            # Signals
+            parsed = parse_signal(text)
+            if parsed:
+                recv_time = datetime.utcnow().strftime("%H:%M:%S")
+                log_info(f"[⚡] Parsed signal at {recv_time}: {parsed}")
+                robust_signal_callback(parsed)
+            else:
+                log_info("[ℹ️] Message ignored (not a valid signal).")
+
+        except Exception as e:
+            log_error(f"[❌] Error handling message: {e}\n{traceback.format_exc()}")
+
+    try:
+        log_info("[⚙️] Connecting to Telegram...")
+        client.start(bot_token=bot_token)
+        log_info("[✅] Connected to Telegram. Listening for messages...")
+        client.run_until_disconnected()
+    except Exception as e:
+        log_error(f"[❌] Telegram listener failed: {e}\n{traceback.format_exc()}")
 
 # ---------------------------
-# Keep ali
-ve
+# Entry point
 # ---------------------------
 if __name__ == "__main__":
-    logger.info("[🚀] Core started (hotkey mode). Waiting for signals...")
-    try:
-        while True:
-            time.sleep(30)
-            logger.info(_random_log("idle_logs"))
-    except KeyboardInterrupt:
-        logger.info("[🛑] Core stopped by KeyboardInterrupt")
+    log_info("[🚀] Telegram listener (integrated) script started.")
+    start_telegram_listener()
