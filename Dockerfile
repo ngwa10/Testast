@@ -5,89 +5,65 @@ ENV DEBIAN_FRONTEND=noninteractive \
     VNC_RESOLUTION=1280x800 \
     NO_VNC_HOME=/opt/noVNC
 
-# -------------------------
-# Install system packages
-# -------------------------
+# Install minimal packages first
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl wget ca-certificates gnupg2 software-properties-common \
-    python3 python3-pip git unzip \
-    xfce4 xfce4-terminal dbus dbus-x11 procps dos2unix \
-    python3-tk python3-dev scrot xclip xsel \
-    xvfb x11-utils tigervnc-standalone-server pulseaudio alsa-utils \
-    ffmpeg \
-    libsm6 libxext6 libxrender-dev libglib2.0-0 \
-    tesseract-ocr tesseract-ocr-eng \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
+    curl wget ca-certificates gnupg2 \
+    python3 python3-pip git \
+    && rm -rf /var/lib/apt/lists/*
 
-
-# -------------------------
-# Install Google Chrome
-# -------------------------
+# Install Chrome (separate step to avoid timeout)
 RUN curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | gpg --dearmor -o /usr/share/keyrings/google-chrome.gpg \
-    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list \
-    && apt-get update && apt-get install -y --no-install-recommends google-chrome-stable \
-    && apt-get clean && rm -rf /var/lib/apt/lists/*
+    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-chrome.gpg] http://dl.google.com/linux/chrome/deb/ stable main" > /etc/apt/sources.list.d/google-chrome.list
 
-# -------------------------
-# Install ChromeDriver
-# -------------------------
-RUN CHROME_VERSION=$(google-chrome --version | sed 's/[^0-9.]//g' | cut -d. -f1) \
-    && LATEST_URL=$(curl -s "https://googlechromelabs.github.io/chrome-for-testing/LATEST_RELEASE_${CHROME_VERSION}") \
-    && wget -O /tmp/chromedriver.zip "https://storage.googleapis.com/chrome-for-testing-public/${LATEST_URL}/linux64/chromedriver-linux64.zip" \
-    && unzip /tmp/chromedriver.zip -d /usr/local/bin/ \
-    && mv /usr/local/bin/chromedriver-linux64/chromedriver /usr/local/bin/chromedriver \
-    && chmod +x /usr/local/bin/chromedriver \
-    && rm -rf /tmp/chromedriver.zip /usr/local/bin/chromedriver-linux64
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    google-chrome-stable \
+    && rm -rf /var/lib/apt/lists/*
 
-# -------------------------
-# Install Python dependencies
-# -------------------------
-RUN pip3 install --no-cache-dir \
-    pytz selenium telethon numpy python-dotenv pyautogui pillow sounddevice opencv-python pytesseract
+# Install VNC and desktop (minimal XFCE)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tigervnc-standalone-server \
+    xfce4-session xfce4-panel \
+    xfce4-terminal \
+    dbus-x11 \
+    procps dos2unix \
+    && rm -rf /var/lib/apt/lists/*
 
-# -------------------------
 # Install noVNC
-# -------------------------
 RUN git clone --depth 1 --branch v1.4.0 https://github.com/novnc/noVNC.git ${NO_VNC_HOME} \
     && git clone --depth 1 https://github.com/novnc/websockify.git ${NO_VNC_HOME}/utils/websockify \
     && chmod +x ${NO_VNC_HOME}/utils/websockify/run
 
-# -------------------------
-# Create non-root user
-# -------------------------
+# Create user
 RUN useradd -m -s /bin/bash -u 1000 dockuser \
-    && mkdir -p /home/dockuser/.vnc /home/dockuser/chrome-profile
-
-# -------------------------
-# Configure VNC xstartup for XFCE
-# -------------------------
-RUN echo '#!/bin/bash\nxrdb $HOME/.Xresources\nstartxfce4 &' > /home/dockuser/.vnc/xstartup \
-    && chmod +x /home/dockuser/.vnc/xstartup
-
-# -------------------------
-# Copy project files
-# -------------------------
-
-# -------------------------
-COPY start.sh /home/dockuser/start.sh
-
-# Fix line endings and make executable
-RUN dos2unix /home/dockuser/start.sh \
-    && chmod +x /home/dockuser/start.sh
+    && mkdir -p /home/dockuser/.vnc /home/dockuser/chrome-profile \
+    && chown -R dockuser:dockuser /home/dockuser
 
 
-# -------------------------
-# Switch to non-root user
-# -------------------------
+# ✅ Install required Python packages
+RUN pip3 install --no-cache-dir selenium telethon
+
+# 🧰 Install pyautogui + X11 deps
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3-tk python3-dev scrot xclip xsel \
+    && pip3 install --no-cache-dir pyautogui pillow
+
+
+# Copy start script
+COPY start.sh /usr/local/bin/start.sh
+RUN dos2unix /usr/local/bin/start.sh && chmod +x /usr/local/bin/start.sh
+
+# Copy core logic
+COPY core.py /home/dockuser/core.py
+RUN chown dockuser:dockuser /home/dockuser/core.py
+
+# Copy Telegram scripts
+COPY telegram_listener.py /home/dockuser/telegram_listener.py
+COPY telegram_callbacks.py /home/dockuser/telegram_callbacks.py
+RUN chown dockuser:dockuser /home/dockuser/telegram_listener.py /home/dockuser/telegram_callbacks.py
+
+EXPOSE 5901 6080
+
 USER dockuser
 WORKDIR /home/dockuser
 
-# -------------------------
-# Expose VNC and noVNC ports
-# -------------------------
-EXPOSE 5901 6080
-
-# -------------------------
-# Entrypoint
-# -------------------------
-ENTRYPOINT ["/home/dockuser/start.sh"]
+ENTRYPOINT ["/usr/local/bin/start.sh"]
