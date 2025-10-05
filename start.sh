@@ -1,13 +1,13 @@
 #!/bin/bash
 set -e
 
-# -------------------------
-# Setup
-# -------------------------
+# =========================
+# Setup directories
+# =========================
 mkdir -p /home/dockuser/.vnc /home/dockuser/chrome-profile
 chmod 700 /home/dockuser/.vnc
 
-# Create xstartup
+# Create xstartup script
 cat > /home/dockuser/.vnc/xstartup << 'EOF'
 #!/bin/bash
 export XKL_XMODMAP_DISABLE=1
@@ -15,25 +15,64 @@ exec startxfce4
 EOF
 chmod +x /home/dockuser/.vnc/xstartup
 
-# -------------------------
-# Start VNC (background for possible GUI, not core)
-# -------------------------
-echo "[ℹ️] Starting VNC server..."
+# =========================
+# Start VNC server
+# =========================
+echo "Starting VNC server..."
 vncserver :1 -geometry 1280x800 -depth 24 -SecurityTypes None
-echo "[✅] VNC server started on :1"
 
-# -------------------------
-# Start core.py in background
-# -------------------------
-echo "[ℹ️] Starting core.py..."
-export DISPLAY=:1
-python3 -u /home/dockuser/core.py &
-CORE_PID=$!
-echo "[✅] core.py started with PID $CORE_PID"
+# =========================
+# Start noVNC
+# =========================
+echo "Starting noVNC..."
+cd /opt/noVNC
+/opt/noVNC/utils/websockify/run 6080 localhost:5901 --web /opt/noVNC &
 
-# -------------------------
-# Start Telegram listener in foreground
-# -------------------------
-echo "[ℹ️] Starting Telegram listener..."
+# Give the desktop some time to start
+sleep 5
+
+# =========================
+# Start Chrome with remote debugging
+# =========================
+echo "Starting Chrome..."
 export DISPLAY=:1
-exec python3 -u /home/dockuser/telegram_listener.py
+google-chrome-stable "https://pocketoption.com/login" \
+  --new-window \
+  --no-sandbox \
+  --disable-dev-shm-usage \
+  --disable-gpu \
+  --start-maximized \
+  --remote-debugging-port=9222 \
+  --user-data-dir=/home/dockuser/chrome-profile &
+
+# Wait longer to ensure Chrome is fully ready
+sleep 20
+
+# =========================
+# we will run a feature here that will automatically fill my password and Gmail in the pocket option login screen after chrome has launch and loaded
+
+# =========================
+# Start core.py (trade execution logic)
+# =========================
+echo "Starting trading core..."
+python3 /home/dockuser/core.py &
+
+# =========================
+# Run Telegram listener with real callbacks
+# =========================
+echo "Starting Telegram listener..."
+python3 - << 'PYTHON_EOF' &
+import sys
+sys.path.insert(0, '/home/dockuser')
+
+from telegram_listener import start_telegram_listener
+from telegram_callbacks import signal_callback, command_callback
+
+start_telegram_listener(signal_callback, command_callback)
+PYTHON_EOF
+
+# =========================
+# Keep the container running
+# =========================
+echo "✅ All services started. Container ready!"
+tail -f /dev/null
