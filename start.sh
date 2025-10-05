@@ -26,6 +26,12 @@ echo "[✅] noVNC started on port 6080"
 sleep 5
 
 # -------------------------
+# Start Chrome launcher
+# -------------------------
+python3 -u launcher.py &
+echo "[ℹ️] Chrome launcher started in background"
+
+# -------------------------
 # Start Telegram listener
 # -------------------------
 python3 -u telegram_listener.py &
