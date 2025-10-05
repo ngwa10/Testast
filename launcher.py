@@ -1,17 +1,19 @@
 # launcher.py
 import os
 import time
+import pyperclip
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.common.keys import Keys
 
 # -----------------------------
 # Hardcoded credentials
 # -----------------------------
-EMAIL = "AaCcWw3468"
+EMAIL = "AaCcWw3468@123gmail.com"
 PASSWORD = "mylivemyfuture@123gmail.com"
 
 # -----------------------------
@@ -28,8 +30,8 @@ chrome_options.add_argument("--disable-extensions")
 chrome_options.add_argument("--disable-infobars")
 chrome_options.add_argument("--disable-notifications")
 chrome_options.add_argument("--remote-debugging-port=9222")
-# NOTE: headless mode is OFF so we can see the browser in VNC
-# chrome_options.add_argument("--headless=new")  # DO NOT use headless
+# Headless OFF to see browser in VNC
+# chrome_options.add_argument("--headless=new")
 
 service = Service("/usr/local/bin/chromedriver")
 
@@ -60,15 +62,22 @@ print("[ℹ️] Navigated to Pocket login page")
 time.sleep(2)
 
 # -----------------------------
+# Function to paste text using clipboard
+# -----------------------------
+def paste_text(element, text):
+    pyperclip.copy(text)
+    element.click()
+    element.send_keys(Keys.CONTROL, "v")  # paste from clipboard
+
+# -----------------------------
 # Enter email
 # -----------------------------
 try:
     email_input = WebDriverWait(driver, 10).until(
         EC.element_to_be_clickable((By.NAME, "email"))
     )
-    email_input.clear()
-    email_input.send_keys(EMAIL)
-    print("[✅] Email entered")
+    paste_text(email_input, EMAIL)
+    print("[✅] Email entered exactly")
 except Exception as e:
     print(f"[❌] Failed to enter email: {e}")
 
@@ -79,9 +88,8 @@ try:
     password_input = WebDriverWait(driver, 10).until(
         EC.element_to_be_clickable((By.NAME, "password"))
     )
-    password_input.clear()
-    password_input.send_keys(PASSWORD)
-    print("[✅] Password entered")
+    paste_text(password_input, PASSWORD)
+    print("[✅] Password entered exactly")
 except Exception as e:
     print(f"[❌] Failed to enter password: {e}")
 
