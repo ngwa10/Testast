@@ -1,78 +1,39 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -e
 
-# =========================
-# Setup directories
-# =========================
-mkdir -p /home/dockuser/.vnc /home/dockuser/chrome-profile
-chmod 700 /home/dockuser/.vnc
+# --------- Config ---------
+export DISPLAY=${DISPLAY:-:1}
+export VNC_RESOLUTION=${VNC_RESOLUTION:-1280x800}
+export NO_VNC_HOME=${NO_VNC_HOME:-/opt/noVNC}
+export VNC_PORT=5901
+export NO_VNC_PORT=6080
 
-# Create xstartup script
-cat > /home/dockuser/.vnc/xstartup << 'EOF'
-#!/bin/bash
-export XKL_XMODMAP_DISABLE=1
-exec startxfce4
-EOF
-chmod +x /home/dockuser/.vnc/xstartup
+echo "✅ Starting XFCE Desktop with VNC (no password) and noVNC..."
+echo "📺 Display: $DISPLAY"
+echo "📐 Resolution: $VNC_RESOLUTION"
+echo "🔌 VNC Port: $VNC_PORT"
+echo "🌐 noVNC Port: $NO_VNC_PORT"
 
-# =========================
-# Start VNC server
-# =========================
-echo "Starting VNC server..."
-vncserver :1 -geometry 1280x800 -depth 24 -SecurityTypes None
+# --------- Start Xvfb ---------
+echo "🚀 Starting virtual framebuffer (Xvfb)..."
+Xvfb $DISPLAY -screen 0 ${VNC_RESOLUTION}x24 &
 
-# =========================
-# Start noVNC
-# =========================
-echo "Starting noVNC..."
-cd /opt/noVNC
-/opt/noVNC/utils/websockify/run 6080 localhost:5901 --web /opt/noVNC &
+# --------- Start XFCE ---------
+echo "🖥️  Starting XFCE4 Desktop..."
+startxfce4 &
 
-# Give the desktop some time to start
-sleep 5
+# --------- Start VNC server (no password) ---------
+echo "📡 Starting TigerVNC server (no password)..."
+vncserver $DISPLAY -geometry $VNC_RESOLUTION -depth 24 -SecurityTypes None
 
-# =========================
-# Start Chrome with remote debugging
-# =========================
-echo "Starting Chrome..."
-export DISPLAY=:1
-google-chrome-stable "https://pocketoption.com/login" \
-  --new-window \
-  --no-sandbox \
-  --disable-dev-shm-usage \
-  --disable-gpu \
-  --start-maximized \
-  --remote-debugging-port=9222 \
-  --user-data-dir=/home/dockuser/chrome-profile &
+# --------- Start noVNC ---------
+echo "🌍 Starting noVNC web client..."
+$NO_VNC_HOME/utils/novnc_proxy --vnc localhost:$VNC_PORT --listen $NO_VNC_PORT &
 
-# Wait longer to ensure Chrome is fully ready
-sleep 20
+# --------- Info ---------
+echo "✅ VNC server running on: vnc://<container-ip>:$VNC_PORT (no password)"
+echo "✅ noVNC web UI available at: http://localhost:$NO_VNC_PORT/vnc.html"
 
-# =========================
-# we will run a feature here that will automatically fill my password and Gmail in the pocket option login screen after chrome has launch and loaded
-
-# =========================
-# Start core.py (trade execution logic)
-# =========================
-echo "Starting trading core..."
-python3 /home/dockuser/core.py &
-
-# =========================
-# Run Telegram listener with real callbacks
-# =========================
-echo "Starting Telegram listener..."
-python3 - << 'PYTHON_EOF' &
-import sys
-sys.path.insert(0, '/home/dockuser')
-
-from telegram_listener import start_telegram_listener
-from telegram_callbacks import signal_callback, command_callback
-
-start_telegram_listener(signal_callback, command_callback)
-PYTHON_EOF
-
-# =========================
-# Keep the container running
-# =========================
-echo "✅ All services started. Container ready!"
+# --------- Keep container alive ---------
+echo "📦 Container is now running. Press Ctrl+C to stop."
 tail -f /dev/null
