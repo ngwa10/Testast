@@ -16,34 +16,20 @@ EOF
 chmod +x /home/dockuser/.vnc/xstartup
 
 # -------------------------
-# Start VNC
+# Start VNC (background for possible GUI, not core)
 # -------------------------
 echo "[ℹ️] Starting VNC server..."
 vncserver :1 -geometry 1280x800 -depth 24 -SecurityTypes None
 echo "[✅] VNC server started on :1"
 
 # -------------------------
-# Start noVNC
+# Start core.py in background
 # -------------------------
-echo "[ℹ️] Starting noVNC proxy..."
-cd /opt/noVNC
-/opt/noVNC/utils/websockify/run 6080 localhost:5901 --web /opt/noVNC &
-echo "[✅] noVNC started on port 6080"
-
-# -------------------------
-# Wait a few seconds for desktop
-# -------------------------
-sleep 5
-
-# -------------------------
-# Start Chrome in background
-# -------------------------
-echo "[ℹ️] Starting Chrome..."
+echo "[ℹ️] Starting core.py..."
 export DISPLAY=:1
-google-chrome-stable --no-sandbox --disable-dev-shm-usage --disable-gpu \
-  --user-data-dir=/home/dockuser/chrome-profile \
-  --start-maximized "https://pocketoption.com/login" &
-echo "[✅] Chrome started"
+python3 -u /home/dockuser/core.py &
+CORE_PID=$!
+echo "[✅] core.py started with PID $CORE_PID"
 
 # -------------------------
 # Start Telegram listener in foreground
