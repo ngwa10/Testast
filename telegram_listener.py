@@ -1,16 +1,18 @@
 print(">>> [DEBUG] telegram_listener.py is starting <<<")
 
+import traceback
+
 try:
     from telethon import TelegramClient, events
     print(">>> [DEBUG] telethon imported <<<")
 except Exception as e:
     print(f">>> [DEBUG] Failed to import telethon: {e}")
+    traceback.print_exc()
     raise
 
 import re
 from datetime import datetime, timedelta
 import logging
-import traceback
 import time
 
 try:
@@ -20,14 +22,16 @@ try:
     print(">>> [DEBUG] shared imported <<<")
 except Exception as e:
     print(f">>> [DEBUG] Failed to import core/shared: {e}")
+    traceback.print_exc()
     raise
 
 try:
     from core_utils import timezone_convert
     print(">>> [DEBUG] core_utils.timezone_convert imported <<<")
-except Exception:
+except Exception as e:
     timezone_convert = None
     print(">>> [DEBUG] core_utils.timezone_convert NOT FOUND <<<")
+    traceback.print_exc()
 
 api_id = 29630724
 api_hash = "8e12421a95fd722246e0c0b194fd3e0c"
