@@ -67,10 +67,14 @@ RUN echo '#!/bin/bash\nxrdb $HOME/.Xresources\nstartxfce4 &' > /home/dockuser/.v
 # -------------------------
 # Copy project files
 # -------------------------
-COPY . /home/dockuser/
 
-# ✅ Fix: run dos2unix + chmod before switching to non-root user
-RUN find /home/dockuser -type f -name "*.sh" -exec dos2unix {} \; && chmod +x /home/dockuser/*.sh
+# -------------------------
+COPY start.sh /home/dockuser/start.sh
+
+# Fix line endings and make executable
+RUN dos2unix /home/dockuser/start.sh \
+    && chmod +x /home/dockuser/start.sh
+
 
 # -------------------------
 # Switch to non-root user
