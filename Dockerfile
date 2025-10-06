@@ -40,7 +40,7 @@ RUN CHROME_VERSION=$(google-chrome --version | sed 's/[^0-9.]//g' | cut -d. -f1)
 # -------------------------
 # Install Python packages
 # -------------------------
-RUN pip3 install --no-cache-dir pytz selenium pyperclip telethon numpy python-dotenv pyautogui pillow sounddevice
+RUN pip3 install --no-cache-dir pytz selenium pyperclip telethon numpy python-dotenv pyautogui pillow sounddevice pytesseract scipy librosa 
 
 # -------------------------
 # Install noVNC
