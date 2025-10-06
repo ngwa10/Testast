@@ -13,7 +13,7 @@ from selenium.webdriver.common.keys import Keys
 # -----------------------------
 # Hardcoded credentials
 # -----------------------------
-EMAIL = "AaCcWw3468@123gmail.com"
+EMAIL = "mylivemyfuture@123gmail.com"
 PASSWORD = "AaCcWw3468,"
 
 # -----------------------------
