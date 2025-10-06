@@ -185,6 +185,10 @@ class TradeManager:
 
         logger.info(_random_log("firing_logs"))
 
+        # Start win/loss detection
+        win_loss.start_trade_result_monitor(trade_id)
+        logger.info(f"[🔎] Win/Loss monitor started for trade {trade_id}")
+
         # send hotkey
         try:
             if direction.upper() == "BUY":
