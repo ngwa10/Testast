@@ -195,6 +195,16 @@ class TradeManager:
         except Exception as e:
             logger.error(f"[❌] Trade {trade_id}: failed main-hotkey: {e}")
 
+        # Start win/loss detection in the last 10 seconds of trade
+expiry_seconds = _tf_to_seconds(timeframe)
+detection_start_delay = max(0, expiry_seconds - 10)
+logger.info(f"[⏱️] Trade {trade_id}: starting detection in {detection_start_delay}s")
+time.sleep(detection_start_delay)
+
+import win_loss
+win_loss.start_trade_result_monitor(trade_id)
+
+        
         # increase trade amount ONCE
         if martingale_level <= self.max_martingale:
             inc_delay = random.randint(2, 40)
