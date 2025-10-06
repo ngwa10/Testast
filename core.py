@@ -186,16 +186,17 @@ class TradeManager:
         logger.info(_random_log("firing_logs"))
 
         # send hotkey
-        try:
-            if direction.upper() == "BUY":
-                pyautogui.hotkey("shift", "w")
-            else:
-                pyautogui.hotkey("shift", "s")
-            logger.info(f"[🎯] Trade {trade_id}: main-hotkey sent ({direction}) at {placed_at.strftime('%H:%M:%S')} level={martingale_level}")
-        except Exception as e:
-            logger.error(f"[❌] Trade {trade_id}: failed main-hotkey: {e}")
+try:
+    if direction.upper() == "BUY":
+        pyautogui.hotkey("shift", "w")
+    else:
+        pyautogui.hotkey("shift", "s")
+    logger.info(f"[🎯] Trade {trade_id}: main-hotkey sent ({direction}) at {placed_at.strftime('%H:%M:%S')} level={martingale_level}")
+except Exception as e:
+    logger.error(f"[❌] Trade {trade_id}: failed main-hotkey: {e}")
 
-        # Start win/loss detection in the last 10 seconds of trade
+# -----------------------------
+# Start win/loss detection in the last 10 seconds of trade
 expiry_seconds = _tf_to_seconds(timeframe)
 detection_start_delay = max(0, expiry_seconds - 10)
 logger.info(f"[⏱️] Trade {trade_id}: starting detection in {detection_start_delay}s")
