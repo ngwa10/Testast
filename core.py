@@ -204,8 +204,7 @@ time.sleep(detection_start_delay)
 
 import win_loss
 win_loss.start_trade_result_monitor(trade_id)
-
-        
+ 
         # increase trade amount ONCE
         if martingale_level <= self.max_martingale:
             inc_delay = random.randint(2, 40)
