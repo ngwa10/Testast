@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tigervnc-standalone-server tigervnc-tools \
     xfce4-session xfce4-panel xfce4-terminal dbus-x11 procps dos2unix \
     python3-tk python3-dev scrot xclip xsel \
-    xvfb x11-utils x11vnc pulseaudio alsa-utils \
+    xvfb x11-utils x11vnc tesseract-ocr pulseaudio alsa-utils \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
