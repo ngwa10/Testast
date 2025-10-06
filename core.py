@@ -14,7 +14,7 @@ from typing import Optional
 import pyautogui
 
 import shared  # 👈 shared singleton
-
+import win_loss  # 👈 win/loss detection module
 # ---------------------------
 # Configuration
 # ---------------------------
