@@ -6,42 +6,43 @@ ENV DEBIAN_FRONTEND=noninteractive \
     NO_VNC_HOME=/opt/noVNC
 
 # -------------------------
-# Install core packages
+# Install core packages and new dependencies (including python3-pil.imagetk)
 # -------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    wget \
-    ca-certificates \
-    gnupg2 \
-    python3 \
-    python3-pip \
-    git \
-    unzip \
-    tigervnc-standalone-server \
-    tigervnc-tools \
-    xfce4-session \
-    xfce4-panel \
-    xfce4-terminal \
-    dbus-x11 \
-    procps \
-    dos2unix \
-    python3-tk \
-    python3-dev \
-    scrot \
-    xclip \
-    xsel \
-    xvfb \
-    x11-utils \
-    x11vnc \
-    tesseract-ocr \
-    pulseaudio \
     alsa-utils \
+    ca-certificates \
+    curl \
+    dbus-x11 \
+    dos2unix \
     ffmpeg \
+    git \
+    gnome-screenshot \
+    gnupg2 \
     libasound2 \
     libportaudio2 \
     portaudio19-dev \
+    procps \
+    pulseaudio \
     pulseaudio-utils \
-    gnome-screenshot \
+    python3 \
+    python3-dev \
+    python3-pip \
+    python3-pil.imagetk \
+    python3-tk \
+    scrot \
+    tesseract-ocr \
+    tigervnc-standalone-server \
+    tigervnc-tools \
+    unzip \
+    wget \
+    x11-utils \
+    x11vnc \
+    xclip \
+    xfce4-panel \
+    xfce4-session \
+    xfce4-terminal \
+    xsel \
+    xvfb \
     && rm -rf /var/lib/apt/lists/*
 
 # -------------------------
@@ -64,7 +65,7 @@ RUN CHROME_VERSION=$(google-chrome --version | sed 's/[^0-9.]//g' | cut -d. -f1)
     && rm -rf /tmp/chromedriver.zip /usr/local/bin/chromedriver-linux64
 
 # -------------------------
-# Install Python packages
+# Install Python packages (combined from old and new, and corrected)
 # -------------------------
 RUN pip3 install --no-cache-dir \
     numpy \
@@ -79,8 +80,7 @@ RUN pip3 install --no-cache-dir \
     pytesseract \
     librosa \
     pyperclip \
-    opencv-python-headless \
-    python3-pil.imagetk
+    opencv-python-headless
 
 # -------------------------
 # Install noVNC
