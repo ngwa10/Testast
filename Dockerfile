@@ -52,6 +52,7 @@ RUN pip3 install --no-cache-dir \
     pytesseract \
     librosa \
     numpy \
+    pytz \
     scipy \
     selenium \
     telethon \
