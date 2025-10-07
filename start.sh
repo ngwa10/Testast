@@ -1,9 +1,6 @@
 #!/bin/bash
 set -e
-
-set -e
-set -x   # 👈 add this line for debugging
-
+set -x   # 👈 debugging output
 
 # -------------------------
 # Environment
@@ -13,8 +10,6 @@ export NO_VNC_HOME=/opt/noVNC
 export VNC_RESOLUTION=${VNC_RESOLUTION:-1280x800}
 
 echo "[🛠️] Preparing environment..."
-
-# -------------------------
 
 # -------------------------
 # Start VNC server
@@ -30,12 +25,20 @@ ${NO_VNC_HOME}/utils/novnc_proxy --vnc localhost:5901 --listen 6080 &
 echo "[✅] noVNC started on port 6080"
 
 # -------------------------
-# Start PulseAudio with dummy sink (fixes audio errors)
+# Start PulseAudio with monitor sink (for audio detection)
 # -------------------------
 echo "[🔊] Starting PulseAudio..."
 pulseaudio --start
-pactl load-module module-null-sink sink_name=DummySink > /dev/null 2>&1 || true
-echo "[✅] Dummy audio device ready"
+
+# Create a null sink to capture audio from apps
+SINK_NAME="VNCOutput"
+pactl load-module module-null-sink sink_name=$SINK_NAME sink_properties=device.description=$SINK_NAME
+
+# List the monitor source for debugging
+echo "[ℹ️] Available PulseAudio sources:"
+pactl list short sources
+
+echo "[✅] Monitor audio device ready. Use '${SINK_NAME}.monitor' in win_loss.py for recording."
 
 # -------------------------
 # Wait for display and audio to be ready
@@ -65,7 +68,7 @@ while true; do
         echo "[⚠️] Core bot exited with code $exit_code. Restarting in 5 seconds..."
         sleep 5
     else
-        echo "[✅] Core bot finished normally."
-        break
+        echo "[✅] Core bot finished normally. Keeping container alive..."
+        sleep 10   # short delay before restarting core bot
     fi
 done
