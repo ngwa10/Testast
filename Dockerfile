@@ -57,7 +57,7 @@ RUN pip3 install --no-cache-dir \
     telethon \
     python-dotenv \
     pyperclip \
-    opencv-python-headless
+    opencv-python-headless \
     pytz
 
 # Install noVNC
