@@ -16,6 +16,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-tk python3-dev scrot xclip xsel \
     xvfb x11-utils x11vnc tesseract-ocr pulseaudio alsa-utils \
     ffmpeg portaudio19-dev \
+    gnome-screenshot \
+    python3-pil.imagetk \
+    pulseaudio-utils \
     && rm -rf /var/lib/apt/lists/*
 
 
