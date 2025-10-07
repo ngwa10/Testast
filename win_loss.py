@@ -1,17 +1,15 @@
 """
 win_loss.py
-Detect trade results using screenshot + optional audio.
+Detect trade results using OpenCV template matching + optional audio.
 Detection starts in the last 10 seconds of a trade, stops after 2 seconds if no result.
 Reports directly to core.py via shared.trade_manager.trade_result_received(...)
 """
 
 import threading
 import time
-from datetime import datetime
-import pyautogui
-from PIL import Image
-import pytesseract
+import cv2
 import numpy as np
+from PIL import ImageGrab
 import sounddevice as sd
 import shared
 import logging
@@ -22,7 +20,6 @@ logger = logging.getLogger("win_loss")
 # ---------------------------
 # Configuration
 # ---------------------------
-SCREENSHOT_REGION = (1000, 300, 200, 80)  # (left, top, width, height) adjust to your trade result area
 DETECTION_TIMEOUT = 2  # seconds
 AUDIO_DETECTION_ENABLED = True
 AUDIO_SAMPLE_DURATION = 1.0  # seconds to listen per check
@@ -30,24 +27,42 @@ AUDIO_DEVICE = "VNCOutput.monitor"  # PulseAudio monitor from start.sh
 WIN_THRESHOLD = 0.02
 LOSS_THRESHOLD = 0.01
 
+# Paths to templates
+WIN_TEMPLATE_PATH = "/home/dockuser/templates/win_template.png"
+LOSS_TEMPLATE_PATH = "/home/dockuser/templates/loss_template.png"
+
+# Template matching threshold
+TEMPLATE_MATCH_THRESHOLD = 0.8
+
 # ---------------------------
 # Utility functions
 # ---------------------------
-def _ocr_detect_result() -> str:
+def _cv_detect_result() -> str:
     """
-    Capture the screen area and try to read the trade result.
+    Uses OpenCV template matching to detect WIN/LOSS anywhere on the screen.
     Returns "WIN", "LOSS", or None
     """
     try:
-        im = pyautogui.screenshot(region=SCREENSHOT_REGION)
-        text = pytesseract.image_to_string(im).strip()
-        text_upper = text.upper()
-        if text_upper.startswith("+"):  # green win
-            return "WIN"
-        elif text_upper == "$0" or "LOSS" in text_upper:  # red loss
-            return "LOSS"
+        # Grab full screen
+        screenshot = np.array(ImageGrab.grab())
+        gray_screenshot = cv2.cvtColor(screenshot, cv2.COLOR_BGR2GRAY)
+
+        # Check WIN template
+        win_template = cv2.imread(WIN_TEMPLATE_PATH, 0)
+        if win_template is not None:
+            res_win = cv2.matchTemplate(gray_screenshot, win_template, cv2.TM_CCOEFF_NORMED)
+            if np.max(res_win) > TEMPLATE_MATCH_THRESHOLD:
+                return "WIN"
+
+        # Check LOSS template
+        loss_template = cv2.imread(LOSS_TEMPLATE_PATH, 0)
+        if loss_template is not None:
+            res_loss = cv2.matchTemplate(gray_screenshot, loss_template, cv2.TM_CCOEFF_NORMED)
+            if np.max(res_loss) > TEMPLATE_MATCH_THRESHOLD:
+                return "LOSS"
+
     except Exception as e:
-        logger.error(f"[❌] OCR detection failed: {e}")
+        logger.error(f"[❌] OpenCV detection failed: {e}")
     return None
 
 
@@ -94,10 +109,10 @@ def _monitor_trade(trade_id: str):
     logger.info(f"[🔎] Win/Loss detection started for trade {trade_id}")
 
     while time.time() - start_time < DETECTION_TIMEOUT:
-        # Screenshot OCR detection
-        result = _ocr_detect_result()
+        # OpenCV template detection
+        result = _cv_detect_result()
         if result:
-            logger.info(f"[📣] Trade {trade_id} result detected via OCR: {result}")
+            logger.info(f"[📣] Trade {trade_id} result detected via OpenCV: {result}")
             shared.trade_manager.trade_result_received(trade_id, result)
             return
 
@@ -156,18 +171,13 @@ def test_audio_monitor(duration: float = 2.0):
 
 
 # ---------------------------
-# Screenshot OCR debug utility
+# Screenshot debug utility
 # ---------------------------
-def test_screenshot_ocr():
+def test_screenshot_cv():
     """
-    Captures the configured screen region and prints detected text.
+    Captures full screen and tests OpenCV template matching.
     """
-    print(f"[ℹ️] Testing OCR for region {SCREENSHOT_REGION}...")
-    try:
-        im = pyautogui.screenshot(region=SCREENSHOT_REGION)
-        im.show()  # optional: display the screenshot in VNC
-        text = pytesseract.image_to_string(im).strip()
-        print(f"[✅] Detected text: '{text}'")
-    except Exception as e:
-        print(f"[❌] OCR test failed: {e}")
+    print(f"[ℹ️] Testing OpenCV template detection...")
+    result = _cv_detect_result()
+    print(f"[✅] Detected result: {result}")
         
