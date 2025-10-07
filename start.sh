@@ -15,11 +15,6 @@ export VNC_RESOLUTION=${VNC_RESOLUTION:-1280x800}
 echo "[🛠️] Preparing environment..."
 
 # -------------------------
-# Start virtual X display (needed for screenshots/OCR)
-# -------------------------
-echo "[📺] Starting Xvfb virtual display..."
-Xvfb :1 -screen 0 ${VNC_RESOLUTION}x24 &
-sleep 2
 
 # -------------------------
 # Start VNC server
