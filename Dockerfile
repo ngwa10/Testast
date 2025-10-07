@@ -2,48 +2,25 @@ FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
     DISPLAY=:1 \
-    VNC_RESOLUTION=1280x800 \
+    VNC_RESOLUTION=1280x1000 \
     NO_VNC_HOME=/opt/noVNC
 
 # -------------------------
-# Install core packages and new dependencies (including python3-pil.imagetk)
+# Install core packages
 # -------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    alsa-utils \
-    ca-certificates \
-    curl \
-    dbus-x11 \
-    dos2unix \
-    ffmpeg \
-    git \
+    curl wget ca-certificates gnupg2 \
+    python3 python3-pip git unzip \
+    tigervnc-standalone-server tigervnc-tools \
+    xfce4-session xfce4-panel xfce4-terminal dbus-x11 procps dos2unix \
+    python3-tk python3-dev scrot xclip xsel \
+    xvfb x11-utils x11vnc tesseract-ocr pulseaudio alsa-utils \
+    ffmpeg portaudio19-dev \
     gnome-screenshot \
-    gnupg2 \
-    libasound2 \
-    libportaudio2 \
-    portaudio19-dev \
-    procps \
-    pulseaudio \
-    pulseaudio-utils \
-    python3 \
-    python3-dev \
-    python3-pip \
     python3-pil.imagetk \
-    python3-tk \
-    scrot \
-    tesseract-ocr \
-    tigervnc-standalone-server \
-    tigervnc-tools \
-    unzip \
-    wget \
-    x11-utils \
-    x11vnc \
-    xclip \
-    xfce4-panel \
-    xfce4-session \
-    xfce4-terminal \
-    xsel \
-    xvfb \
+    pulseaudio-utils \
     && rm -rf /var/lib/apt/lists/*
+
 
 # -------------------------
 # Install Chrome
@@ -65,24 +42,25 @@ RUN CHROME_VERSION=$(google-chrome --version | sed 's/[^0-9.]//g' | cut -d. -f1)
     && rm -rf /tmp/chromedriver.zip /usr/local/bin/chromedriver-linux64
 
 # -------------------------
-# Install Python packages (combined from old and new, and corrected)
+# Install Python packages
 # -------------------------
+
 RUN pip3 install --no-cache-dir \
+    pillow>=9.2.0 \
+    sounddevice \
+    pyautogui \
+    pytesseract \
+    librosa \
     numpy \
     scipy \
-    pytz \
     selenium \
     telethon \
     python-dotenv \
-    pyautogui \
-    "pillow>=9.2.0" \
-    sounddevice \
-    pytesseract \
-    librosa \
     pyperclip \
     opencv-python-headless
 
-# -------------------------
+    
+
 # Install noVNC
 # -------------------------
 RUN git clone --depth 1 --branch v1.4.0 https://github.com/novnc/noVNC.git ${NO_VNC_HOME} \
@@ -105,8 +83,9 @@ RUN useradd -m -s /bin/bash -u 1000 dockuser \
 # -------------------------
 # Copy bot files (change ownership)
 # -------------------------
-COPY .env core.py screen_logic.py telegram_listener.py telegram_callbacks.py core_utils.py shared.py logs.json debug_core.py /home/dockuser/
+COPY launcher.py core.py screen_logic.py telegram_listener.py telegram_callbacks.py core_utils.py shared.py win_loss.py logs.json debug_core.py /home/dockuser/
 RUN chown -R dockuser:dockuser /home/dockuser
+
 
 USER dockuser
 WORKDIR /home/dockuser
@@ -115,3 +94,8 @@ WORKDIR /home/dockuser
 # Expose ports for VNC
 # -------------------------
 EXPOSE 5901 6080
+
+# -------------------------
+# Default entrypoint
+# -------------------------
+ENTRYPOINT ["/usr/local/bin/start.sh"]
