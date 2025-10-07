@@ -24,10 +24,11 @@ logger = logging.getLogger("win_loss")
 # ---------------------------
 SCREENSHOT_REGION = (1000, 300, 200, 80)  # (left, top, width, height) adjust to your trade result area
 DETECTION_TIMEOUT = 2  # seconds
-AUDIO_DETECTION_ENABLED = True  # if you want to detect the audio layer
+AUDIO_DETECTION_ENABLED = True
 AUDIO_SAMPLE_DURATION = 1.0  # seconds to listen per check
-AUDIO_THRESHOLD = 0.02  # simple RMS threshold for detecting click/sound
-
+AUDIO_DEVICE = "VNCOutput.monitor"  # PulseAudio monitor from start.sh
+WIN_THRESHOLD = 0.02
+LOSS_THRESHOLD = 0.01
 
 # ---------------------------
 # Utility functions
@@ -52,17 +53,34 @@ def _ocr_detect_result() -> str:
 
 def _audio_detect_result() -> str:
     """
-    Simple audio detection: checks if RMS exceeds threshold
-    Returns "WIN", "LOSS", or None
+    Audio detection: checks if RMS exceeds thresholds.
+    Returns "WIN", "LOSS", or None.
+    Logs RMS values for debugging.
     """
     if not AUDIO_DETECTION_ENABLED:
         return None
     try:
-        data = sd.rec(int(AUDIO_SAMPLE_DURATION * 44100), samplerate=44100, channels=1, blocking=True)
+        # Record from PulseAudio monitor
+        data = sd.rec(
+            int(AUDIO_SAMPLE_DURATION * 44100),
+            samplerate=44100,
+            channels=1,
+            blocking=True,
+            device=AUDIO_DEVICE
+        )
         rms = (np.mean(np.square(data))) ** 0.5
-        if rms > AUDIO_THRESHOLD:
-            # You can customize: maybe the broker uses distinct sounds for win/loss
-            return "WIN"  # placeholder
+
+        # Log RMS for debugging
+        logger.info(f"[🔊] Audio RMS: {rms:.5f}")
+
+        if rms > WIN_THRESHOLD:
+            logger.info(f"[📣] Audio RMS above WIN threshold, reporting WIN")
+            return "WIN"
+        elif rms > LOSS_THRESHOLD:
+            logger.info(f"[📣] Audio RMS above LOSS threshold, reporting LOSS")
+            return "LOSS"
+        else:
+            logger.info(f"[ℹ️] Audio below detection thresholds")
     except Exception as e:
         logger.error(f"[❌] Audio detection failed: {e}")
     return None
@@ -107,3 +125,49 @@ def start_trade_result_monitor(trade_id: str):
     t = threading.Thread(target=_monitor_trade, args=(trade_id,), daemon=True)
     t.start()
 
+
+# ---------------------------
+# Audio debug utility
+# ---------------------------
+def test_audio_monitor(duration: float = 2.0):
+    """
+    Records from the PulseAudio monitor for `duration` seconds
+    and prints RMS value to verify audio capture.
+    """
+    print(f"[ℹ️] Testing audio monitor '{AUDIO_DEVICE}' for {duration} seconds...")
+    try:
+        data = sd.rec(
+            int(duration * 44100),
+            samplerate=44100,
+            channels=1,
+            blocking=True,
+            device=AUDIO_DEVICE
+        )
+        rms = (np.mean(np.square(data))) ** 0.5
+        print(f"[✅] RMS detected: {rms:.5f}")
+        if rms > WIN_THRESHOLD:
+            print("[✅] Audio above WIN threshold detected!")
+        elif rms > LOSS_THRESHOLD:
+            print("[✅] Audio above LOSS threshold detected!")
+        else:
+            print("[ℹ️] Audio below thresholds.")
+    except Exception as e:
+        print(f"[❌] Audio test failed: {e}")
+
+
+# ---------------------------
+# Screenshot OCR debug utility
+# ---------------------------
+def test_screenshot_ocr():
+    """
+    Captures the configured screen region and prints detected text.
+    """
+    print(f"[ℹ️] Testing OCR for region {SCREENSHOT_REGION}...")
+    try:
+        im = pyautogui.screenshot(region=SCREENSHOT_REGION)
+        im.show()  # optional: display the screenshot in VNC
+        text = pytesseract.image_to_string(im).strip()
+        print(f"[✅] Detected text: '{text}'")
+    except Exception as e:
+        print(f"[❌] OCR test failed: {e}")
+        
