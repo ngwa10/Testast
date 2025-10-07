@@ -45,7 +45,7 @@ RUN CHROME_VERSION=$(google-chrome --version | sed 's/[^0-9.]//g' | cut -d. -f1)
 # Install Python packages
 # -------------------------
 
-RUN pip3 install --no-cache-dir \
+RUN pip3 install --no-cache-dir
     pillow>=9.2.0 \
     sounddevice \
     pyautogui \
@@ -58,7 +58,7 @@ RUN pip3 install --no-cache-dir \
     python-dotenv \
     pyperclip \
     opencv-python-headless
-
+    
 # Install noVNC
 # -------------------------
 RUN git clone --depth 1 --branch v1.4.0 https://github.com/novnc/noVNC.git ${NO_VNC_HOME} \
