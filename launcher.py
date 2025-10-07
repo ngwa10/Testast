@@ -33,6 +33,23 @@ chrome_options.add_argument("--remote-debugging-port=9222")
 # Headless OFF to see browser in VNC
 # chrome_options.add_argument("--headless=new")
 
+# stealth flags (add these with your other chrome_options)
+chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+
+# later, immediately after creating the driver object, inject script to hide navigator.webdriver
+driver = webdriver.Chrome(service=service, options=chrome_options)
+
+# hide webdriver property in new pages
+driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
+    "source": """
+        Object.defineProperty(navigator, 'webdriver', {
+            get: () => undefined
+        });
+    """
+})
+
+
 service = Service("/usr/local/bin/chromedriver")
 
 # -----------------------------
