@@ -9,13 +9,39 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # Install core packages
 # -------------------------
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl wget ca-certificates gnupg2 \
-    python3 python3-pip git unzip \
-    tigervnc-standalone-server tigervnc-tools \
-    xfce4-session xfce4-panel xfce4-terminal dbus-x11 procps dos2unix \
-    python3-tk python3-dev scrot xclip xsel \
-    xvfb x11-utils x11vnc pulseaudio alsa-utils \
+    curl \
+    wget \
+    ca-certificates \
+    gnupg2 \
+    python3 \
+    python3-pip \
+    git \
+    unzip \
+    tigervnc-standalone-server \
+    tigervnc-tools \
+    xfce4-session \
+    xfce4-panel \
+    xfce4-terminal \
+    dbus-x11 \
+    procps \
+    dos2unix \
+    python3-tk \
+    python3-dev \
+    scrot \
+    xclip \
+    xsel \
+    xvfb \
+    x11-utils \
+    x11vnc \
+    tesseract-ocr \
+    pulseaudio \
+    alsa-utils \
     ffmpeg \
+    libasound2 \
+    libportaudio2 \
+    portaudio19-dev \
+    pulseaudio-utils \
+    gnome-screenshot \
     && rm -rf /var/lib/apt/lists/*
 
 # -------------------------
@@ -40,7 +66,21 @@ RUN CHROME_VERSION=$(google-chrome --version | sed 's/[^0-9.]//g' | cut -d. -f1)
 # -------------------------
 # Install Python packages
 # -------------------------
-RUN pip3 install --no-cache-dir pytz selenium telethon numpy python-dotenv pyautogui pillow sounddevice
+RUN pip3 install --no-cache-dir \
+    numpy \
+    scipy \
+    pytz \
+    selenium \
+    telethon \
+    python-dotenv \
+    pyautogui \
+    "pillow>=9.2.0" \
+    sounddevice \
+    pytesseract \
+    librosa \
+    pyperclip \
+    opencv-python-headless \
+    python3-pil.imagetk
 
 # -------------------------
 # Install noVNC
@@ -68,7 +108,6 @@ RUN useradd -m -s /bin/bash -u 1000 dockuser \
 COPY .env core.py screen_logic.py telegram_listener.py telegram_callbacks.py core_utils.py shared.py logs.json debug_core.py /home/dockuser/
 RUN chown -R dockuser:dockuser /home/dockuser
 
-
 USER dockuser
 WORKDIR /home/dockuser
 
@@ -76,8 +115,3 @@ WORKDIR /home/dockuser
 # Expose ports for VNC
 # -------------------------
 EXPOSE 5901 6080
-
-# -------------------------
-# Default entrypoint
-# -------------------------
-ENTRYPOINT ["/usr/local/bin/start.sh"]
