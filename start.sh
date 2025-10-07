@@ -7,7 +7,7 @@ set -x   # 👈 debugging output
 # -------------------------
 export DISPLAY=:1
 export NO_VNC_HOME=/opt/noVNC
-export VNC_RESOLUTION=${VNC_RESOLUTION:-1280x800}
+export VNC_RESOLUTION=${VNC_RESOLUTION:-1280x1000}
 
 echo "[🛠️] Preparing environment..."
 
