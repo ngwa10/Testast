@@ -1,6 +1,10 @@
 #!/bin/bash
 set -e
 
+set -e
+set -x   # 👈 add this line for debugging
+
+
 # -------------------------
 # Environment
 # -------------------------
