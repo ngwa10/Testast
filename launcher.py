@@ -33,24 +33,32 @@ chrome_options.add_argument("--remote-debugging-port=9222")
 # Headless OFF to see browser in VNC
 # chrome_options.add_argument("--headless=new")
 
-# stealth flags (add these with your other chrome_options)
+# stealth flags
 chrome_options.add_argument("--disable-blink-features=AutomationControlled")
 chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
 
-# later, immediately after creating the driver object, inject script to hide navigator.webdriver
+# -----------------------------
+# ChromeDriver service path (must be defined before creating driver)
+# -----------------------------
+service = Service("/usr/local/bin/chromedriver")
+
+# -----------------------------
+# Launch Chrome and apply stealth script
+# -----------------------------
 driver = webdriver.Chrome(service=service, options=chrome_options)
 
-# hide webdriver property in new pages
-driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
-    "source": """
-        Object.defineProperty(navigator, 'webdriver', {
-            get: () => undefined
-        });
-    """
-})
-
-
-service = Service("/usr/local/bin/chromedriver")
+# Extra stealth: remove navigator.webdriver for new pages (may raise on old drivers; catch errors)
+try:
+    driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
+        "source": """
+            Object.defineProperty(navigator, 'webdriver', {
+                get: () => undefined
+            });
+        """
+    })
+except Exception as e:
+    # Not fatal — log for debugging
+    print(f"[⚠️] Warning: couldn't inject webdriver override: {e}")
 
 # -----------------------------
 # Wait for DISPLAY to be ready
@@ -71,9 +79,8 @@ else:
     print(f"[⚠️] Display {DISPLAY} not found. Continuing anyway...")
 
 # -----------------------------
-# Launch Chrome and navigate to Pocket login
+# Navigate to Pocket login
 # -----------------------------
-driver = webdriver.Chrome(service=service, options=chrome_options)
 driver.get("https://pocketoption.com/login")
 print("[ℹ️] Navigated to Pocket login page")
 time.sleep(2)
