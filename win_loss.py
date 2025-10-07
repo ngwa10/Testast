@@ -1,8 +1,9 @@
 """
 win_loss.py
-Detect trade results using OpenCV template matching + optional audio.
-Detection starts in the last 10 seconds of a trade, stops after 2 seconds if no result.
-Reports directly to core.py via shared.trade_manager.trade_result_received(...)
+Detect trade results using OpenCV template matching.
+- Handles dynamic positioning, size variations, and noise
+- Supports multiple templates for improved detection
+- Stops detection after 2s if no result
 """
 
 import threading
@@ -10,9 +11,10 @@ import time
 import cv2
 import numpy as np
 from PIL import ImageGrab
-import sounddevice as sd
 import shared
 import logging
+import os
+import glob
 
 # Logging setup
 logger = logging.getLogger("win_loss")
@@ -21,15 +23,10 @@ logger = logging.getLogger("win_loss")
 # Configuration
 # ---------------------------
 DETECTION_TIMEOUT = 2  # seconds
-AUDIO_DETECTION_ENABLED = True
-AUDIO_SAMPLE_DURATION = 1.0  # seconds to listen per check
-AUDIO_DEVICE = "VNCOutput.monitor"  # PulseAudio monitor from start.sh
-WIN_THRESHOLD = 0.02
-LOSS_THRESHOLD = 0.01
 
-# Paths to templates
-WIN_TEMPLATE_PATH = "/home/dockuser/templates/win_template.png"
-LOSS_TEMPLATE_PATH = "/home/dockuser/templates/loss_template.png"
+# Template directories (can hold multiple templates)
+WIN_TEMPLATE_DIR = "/home/dockuser/templates/win/"
+LOSS_TEMPLATE_DIR = "/home/dockuser/templates/loss/"
 
 # Template matching threshold
 TEMPLATE_MATCH_THRESHOLD = 0.8
@@ -37,67 +34,70 @@ TEMPLATE_MATCH_THRESHOLD = 0.8
 # ---------------------------
 # Utility functions
 # ---------------------------
+def _load_templates_from_dir(directory: str):
+    """Load all PNG templates from a directory."""
+    templates = []
+    for path in glob.glob(os.path.join(directory, "*.png")):
+        template = cv2.imread(path, 0)
+        if template is not None:
+            templates.append(template)
+        else:
+            logger.warning(f"[⚠️] Could not load template: {path}")
+    return templates
+
+
 def _cv_detect_result() -> str:
     """
     Uses OpenCV template matching to detect WIN/LOSS anywhere on the screen.
-    Returns "WIN", "LOSS", or None
+    - Multi-scale
+    - Multi-template
+    - Noise robust
+    Returns "WIN", "LOSS", or None.
     """
     try:
         # Grab full screen
         screenshot = np.array(ImageGrab.grab())
         gray_screenshot = cv2.cvtColor(screenshot, cv2.COLOR_BGR2GRAY)
 
-        # Check WIN template
-        win_template = cv2.imread(WIN_TEMPLATE_PATH, 0)
-        if win_template is not None:
-            res_win = cv2.matchTemplate(gray_screenshot, win_template, cv2.TM_CCOEFF_NORMED)
-            if np.max(res_win) > TEMPLATE_MATCH_THRESHOLD:
-                return "WIN"
+        # Preprocess for robustness
+        gray_screenshot = cv2.GaussianBlur(gray_screenshot, (3, 3), 0)  # reduce noise
+        gray_screenshot = cv2.equalizeHist(gray_screenshot)             # normalize contrast
 
-        # Check LOSS template
-        loss_template = cv2.imread(LOSS_TEMPLATE_PATH, 0)
-        if loss_template is not None:
-            res_loss = cv2.matchTemplate(gray_screenshot, loss_template, cv2.TM_CCOEFF_NORMED)
-            if np.max(res_loss) > TEMPLATE_MATCH_THRESHOLD:
-                return "LOSS"
+        # Load all templates
+        win_templates = _load_templates_from_dir(WIN_TEMPLATE_DIR)
+        loss_templates = _load_templates_from_dir(LOSS_TEMPLATE_DIR)
+
+        detected_result = None
+        best_score = 0.0
+
+        # Helper: match template(s) across scales
+        def match_templates(templates, label):
+            nonlocal detected_result, best_score
+            for template in templates:
+                for scale in np.linspace(0.9, 1.1, 5):  # ±10% scale range
+                    resized = cv2.resize(template, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+                    if resized.shape[0] > gray_screenshot.shape[0] or resized.shape[1] > gray_screenshot.shape[1]:
+                        continue
+                    res = cv2.matchTemplate(gray_screenshot, resized, cv2.TM_CCOEFF_NORMED)
+                    max_val = np.max(res)
+                    if max_val > best_score:
+                        best_score = max_val
+                        detected_result = label
+
+        # Try all WIN and LOSS templates
+        match_templates(win_templates, "WIN")
+        match_templates(loss_templates, "LOSS")
+
+        # Final decision
+        if best_score > TEMPLATE_MATCH_THRESHOLD:
+            logger.info(f"[✅] Detected {detected_result} (confidence: {best_score:.3f})")
+            return detected_result
+        else:
+            logger.info(f"[ℹ️] No result detected (best confidence: {best_score:.3f})")
 
     except Exception as e:
         logger.error(f"[❌] OpenCV detection failed: {e}")
-    return None
 
-
-def _audio_detect_result() -> str:
-    """
-    Audio detection: checks if RMS exceeds thresholds.
-    Returns "WIN", "LOSS", or None.
-    Logs RMS values for debugging.
-    """
-    if not AUDIO_DETECTION_ENABLED:
-        return None
-    try:
-        # Record from PulseAudio monitor
-        data = sd.rec(
-            int(AUDIO_SAMPLE_DURATION * 44100),
-            samplerate=44100,
-            channels=1,
-            blocking=True,
-            device=AUDIO_DEVICE
-        )
-        rms = (np.mean(np.square(data))) ** 0.5
-
-        # Log RMS for debugging
-        logger.info(f"[🔊] Audio RMS: {rms:.5f}")
-
-        if rms > WIN_THRESHOLD:
-            logger.info(f"[📣] Audio RMS above WIN threshold, reporting WIN")
-            return "WIN"
-        elif rms > LOSS_THRESHOLD:
-            logger.info(f"[📣] Audio RMS above LOSS threshold, reporting LOSS")
-            return "LOSS"
-        else:
-            logger.info(f"[ℹ️] Audio below detection thresholds")
-    except Exception as e:
-        logger.error(f"[❌] Audio detection failed: {e}")
     return None
 
 
@@ -109,21 +109,12 @@ def _monitor_trade(trade_id: str):
     logger.info(f"[🔎] Win/Loss detection started for trade {trade_id}")
 
     while time.time() - start_time < DETECTION_TIMEOUT:
-        # OpenCV template detection
         result = _cv_detect_result()
         if result:
-            logger.info(f"[📣] Trade {trade_id} result detected via OpenCV: {result}")
+            logger.info(f"[📣] Trade {trade_id} result detected: {result}")
             shared.trade_manager.trade_result_received(trade_id, result)
             return
-
-        # Audio detection layer
-        result = _audio_detect_result()
-        if result:
-            logger.info(f"[📣] Trade {trade_id} result detected via audio: {result}")
-            shared.trade_manager.trade_result_received(trade_id, result)
-            return
-
-        time.sleep(0.1)  # small delay to avoid hogging CPU
+        time.sleep(0.1)
 
     # Timeout without result
     logger.warning(f"[⚠️] Trade {trade_id}: no result detected after {DETECTION_TIMEOUT}s")
@@ -142,42 +133,14 @@ def start_trade_result_monitor(trade_id: str):
 
 
 # ---------------------------
-# Audio debug utility
-# ---------------------------
-def test_audio_monitor(duration: float = 2.0):
-    """
-    Records from the PulseAudio monitor for `duration` seconds
-    and prints RMS value to verify audio capture.
-    """
-    print(f"[ℹ️] Testing audio monitor '{AUDIO_DEVICE}' for {duration} seconds...")
-    try:
-        data = sd.rec(
-            int(duration * 44100),
-            samplerate=44100,
-            channels=1,
-            blocking=True,
-            device=AUDIO_DEVICE
-        )
-        rms = (np.mean(np.square(data))) ** 0.5
-        print(f"[✅] RMS detected: {rms:.5f}")
-        if rms > WIN_THRESHOLD:
-            print("[✅] Audio above WIN threshold detected!")
-        elif rms > LOSS_THRESHOLD:
-            print("[✅] Audio above LOSS threshold detected!")
-        else:
-            print("[ℹ️] Audio below thresholds.")
-    except Exception as e:
-        print(f"[❌] Audio test failed: {e}")
-
-
-# ---------------------------
 # Screenshot debug utility
 # ---------------------------
 def test_screenshot_cv():
     """
     Captures full screen and tests OpenCV template matching.
+    Shows best match confidence score for debugging.
     """
-    print(f"[ℹ️] Testing OpenCV template detection...")
+    print("[ℹ️] Testing OpenCV template detection...")
     result = _cv_detect_result()
     print(f"[✅] Detected result: {result}")
-        
+                                         
