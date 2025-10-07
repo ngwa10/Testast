@@ -46,12 +46,8 @@ RUN CHROME_VERSION=$(google-chrome --version | sed 's/[^0-9.]//g' | cut -d. -f1)
 ```
 ------------------------- 
 Install dependencies 
-------------------------- 
 RUN apt-get install -y libasound2 libportaudio2 python3-pil python3-dev && \
     pip3 install --no-cache-dir numpy scipy
-------------------------- 
-Install Python packages 
-------------------------- 
 RUN pip3 install --no-cache-dir pillow>=9.2.0,sounddevice,pyautogui,pytesseract,librosa,selenium,telethon,python-dotenv,pyperclip,opencv-python-headless
 ```
 
