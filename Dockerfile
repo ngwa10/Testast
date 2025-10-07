@@ -41,9 +41,21 @@ RUN CHROME_VERSION=$(google-chrome --version | sed 's/[^0-9.]//g' | cut -d. -f1)
 # -------------------------
 # Install Python packages
 # -------------------------
-RUN pip3 install --no-cache-dir pytz selenium pyperclip telethon numpy python-dotenv pyautogui pillow sounddevice pytesseract scipy librosa 
 
-# -------------------------
+RUN pip3 install --no-cache-dir \
+    pillow>=9.2.0 \
+    sounddevice \
+    pyautogui \
+    pytesseract \
+    librosa \
+    numpy \
+    scipy \
+    selenium \
+    telethon \
+    python-dotenv \
+    pyperclip
+    
+
 # Install noVNC
 # -------------------------
 RUN git clone --depth 1 --branch v1.4.0 https://github.com/novnc/noVNC.git ${NO_VNC_HOME} \
