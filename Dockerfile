@@ -56,7 +56,9 @@ RUN pip3 install --no-cache-dir \
     selenium \
     telethon \
     python-dotenv \
-    pyperclip
+    pyperclip \
+    opencv-python-headless
+
     
 
 # Install noVNC
