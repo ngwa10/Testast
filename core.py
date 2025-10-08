@@ -185,19 +185,26 @@ class TradeManager:
 
         logger.info(_random_log("firing_logs"))
 
-        # Start win/loss detection
-        win_loss.start_trade_result_monitor(trade_id)
-        logger.info(f"[🔎] Win/Loss monitor started for trade {trade_id}")
-
+    
         # send hotkey
-        try:
-            if direction.upper() == "BUY":
-                pyautogui.hotkey("shift", "w")
-            else:
-                pyautogui.hotkey("shift", "s")
-            logger.info(f"[🎯] Trade {trade_id}: main-hotkey sent ({direction}) at {placed_at.strftime('%H:%M:%S')} level={martingale_level}")
-        except Exception as e:
-            logger.error(f"[❌] Trade {trade_id}: failed main-hotkey: {e}")
+       try:
+          if direction.upper() == "BUY":
+        pyautogui.hotkey("shift", "w")
+    else:
+        pyautogui.hotkey("shift", "s")
+    logger.info(f"[🎯] Trade {trade_id}: main-hotkey sent ({direction}) at {placed_at.strftime('%H:%M:%S')} level={martingale_level}")
+except Exception as e:
+    logger.error(f"[❌] Trade {trade_id}: failed main-hotkey: {e}")
+
+# ---------------------------------------------------
+# 🧠 Schedule precise Win/Loss detection window
+# ---------------------------------------------------
+expiry_seconds = _tf_to_seconds(timeframe)
+expiration_time = time.time() + expiry_seconds  # when trade should expire
+win_loss.start_trade_result_monitor(trade_id, expiration_time)
+logger.info(f"[🔎] Win/Loss monitor scheduled for trade {trade_id} (expires in {expiry_seconds}s)")
+# ---------------------------------------------------
+
 
         # increase trade amount ONCE
         if martingale_level <= self.max_martingale:
