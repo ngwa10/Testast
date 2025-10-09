@@ -1,4 +1,3 @@
-# core.py
 """
 Core trading logic (hotkey-driven, personality logs)
 """
@@ -195,20 +194,22 @@ class TradeManager:
         except Exception as e:
             logger.error(f"[❌] Trade {trade_id}: failed main-hotkey: {e}")
 
-               # ---------------------------
+        # ---------------------------
         # 🧠 Intensified Win/Loss detection for final second
         # ---------------------------
         expiry_seconds = _tf_to_seconds(timeframe)
         expiration_time = time.time() + expiry_seconds
-        win_loss.start_trade_result_monitor(
+
+        # ✅ FIX: directly call local function instead of undefined win_loss
+        start_trade_result_monitor(
             trade_id,
-            expiration_time,
+            expiry_timestamp=expiration_time,
             intensify_window=(expiration_time - 1.0, expiration_time + 1.0),
             poll_interval=0.15
         )
         logger.info(f"[🔎] Win/Loss monitor scheduled for trade {trade_id} with intensify window at final second")
         # ---------------------------
-        
+
         # increase trade amount ONCE
         if martingale_level <= self.max_martingale:
             inc_delay = random.randint(2, 40)
@@ -292,18 +293,12 @@ class TradeManager:
         except Exception as e:
             logger.exception(f"[❌] handle_trade_result error: {e}")
 
-    # ---- handle Telegram /start and /stop ----
     def handle_command(self, cmd: str):
-        """
-        Handles commands like /start and /stop without breaking the core logic.
-        """
         try:
             if cmd.startswith("/start"):
                 logger.info("[✅] Trading started (command received)")
-                # Optional: self.enabled = True
             elif cmd.startswith("/stop"):
                 logger.info("[🛑] Trading stopped (command received)")
-                # Optional: self.enabled = False
             else:
                 logger.info(f"[ℹ️] Unknown command received: {cmd}")
         except Exception as e:
@@ -337,3 +332,147 @@ if __name__ == "__main__":
             logger.info(_random_log("idle_logs"))
     except KeyboardInterrupt:
         logger.info("[🛑] Core stopped by KeyboardInterrupt")
+
+
+# ---------------------------------------------------------------------------
+# 🔍 Win/Loss Detection Logic (unchanged, just appended at bottom of file)
+# ---------------------------------------------------------------------------
+import cv2
+import numpy as np
+from PIL import ImageGrab
+import os
+import glob
+import pytesseract
+import hashlib
+import datetime
+
+logger = logging.getLogger("win_loss")
+
+WIN_TEMPLATE_DIR = "/home/dockuser/templates/win/"
+LOSS_TEMPLATE_DIR = "/home/dockuser/templates/loss/"
+MAX_TEMPLATES = 30
+TEMPLATE_MATCH_THRESHOLD = 0.8
+ROI_PAD = 20
+FAST_SCAN_INTERVAL = 0.1
+FAST_SCAN_DURATION = 3
+
+os.makedirs(WIN_TEMPLATE_DIR, exist_ok=True)
+os.makedirs(LOSS_TEMPLATE_DIR, exist_ok=True)
+
+def _load_templates_from_dir(directory: str):
+    templates = []
+    for path in glob.glob(os.path.join(directory, "*.png")):
+        template = cv2.imread(path, 0)
+        if template is not None:
+            templates.append(template)
+    return templates
+
+def _image_hash(img):
+    return hashlib.md5(cv2.imencode('.png', img)[1]).hexdigest()
+
+def _cleanup_templates(template_dir):
+    files = sorted(
+        glob.glob(os.path.join(template_dir, "*.png")),
+        key=os.path.getmtime
+    )
+    while len(files) > MAX_TEMPLATES:
+        os.remove(files[0])
+        files.pop(0)
+
+def _save_template_if_needed(img, template_dir, prefix):
+    existing_files = os.listdir(template_dir)
+    h = _image_hash(img)
+    for f in existing_files:
+        existing_img = cv2.imread(os.path.join(template_dir, f))
+        if _image_hash(existing_img) == h:
+            return False
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"{prefix}_{timestamp}.png"
+    cv2.imwrite(os.path.join(template_dir, filename), cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
+    _cleanup_templates(template_dir)
+    return True
+
+def _predict_result_roi(screenshot):
+    hsv = cv2.cvtColor(screenshot, cv2.COLOR_BGR2HSV)
+    lower = np.array([0, 50, 150])
+    upper = np.array([180, 255, 255])
+    mask = cv2.inRange(hsv, lower, upper)
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return screenshot
+    rightmost = max(contours, key=lambda c: cv2.boundingRect(c)[0] + cv2.boundingRect(c)[2])
+    x, y, w, h = cv2.boundingRect(rightmost)
+    roi_x1 = max(x + w - ROI_PAD, 0)
+    roi_y1 = max(y - ROI_PAD, 0)
+    roi_x2 = min(x + w + ROI_PAD, screenshot.shape[1])
+    roi_y2 = min(y + h + ROI_PAD, screenshot.shape[0])
+    roi = screenshot[roi_y1:roi_y2, roi_x1:roi_x2]
+    return roi
+
+def _capture_template_from_roi(roi, result_type):
+    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+    data = pytesseract.image_to_data(gray, output_type=pytesseract.Output.DICT)
+    for i, text in enumerate(data['text']):
+        t = text.strip()
+        if result_type == "WIN" and t.startswith("+"):
+            _save_template_if_needed(roi, WIN_TEMPLATE_DIR, "win")
+            break
+        elif result_type == "LOSS" and t == "$0":
+            _save_template_if_needed(roi, LOSS_TEMPLATE_DIR, "loss")
+            break
+
+def _match_templates(roi, templates, type_name):
+    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+    for template in templates:
+        res = cv2.matchTemplate(gray, template, cv2.TM_CCOEFF_NORMED)
+        max_val = np.max(res)
+        if max_val >= TEMPLATE_MATCH_THRESHOLD:
+            return True
+    return False
+
+def _cv_detect_result() -> str:
+    try:
+        screenshot = np.array(ImageGrab.grab())
+        roi = _predict_result_roi(screenshot)
+        win_templates = _load_templates_from_dir(WIN_TEMPLATE_DIR)
+        loss_templates = _load_templates_from_dir(LOSS_TEMPLATE_DIR)
+        win_detected = _match_templates(roi, win_templates, "WIN")
+        loss_detected = _match_templates(roi, loss_templates, "LOSS")
+        gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+        ocr_text = pytesseract.image_to_string(gray_roi)
+        ocr_win = any(s.startswith("+") for s in ocr_text.split())
+        ocr_loss = "$0" in ocr_text
+        if win_detected or ocr_win:
+            _capture_template_from_roi(roi, "WIN")
+            return "WIN"
+        if loss_detected or ocr_loss:
+            _capture_template_from_roi(roi, "LOSS")
+            return "LOSS"
+    except Exception:
+        pass
+    return None
+
+def _monitor_trade(trade_id: str, expiry_timestamp: float = None):
+    if expiry_timestamp:
+        now = time.time()
+        wait = expiry_timestamp - now - 1
+        if wait > 0:
+            time.sleep(wait)
+    end_time = (expiry_timestamp or time.time()) + 2
+    while time.time() < end_time:
+        result = _cv_detect_result()
+        if result:
+            shared.trade_manager.trade_result_received(trade_id, result)
+            return
+        time.sleep(FAST_SCAN_INTERVAL)
+    shared.trade_manager.trade_result_received(trade_id, "NO_RESULT")
+
+# ✅ FIXED FUNCTION (tolerates kwargs, avoids NameError)
+def start_trade_result_monitor(trade_id: str,
+                               expiry_timestamp: float = None,
+                               intensify_window=None,
+                               poll_interval=None,
+                               **kwargs):
+    t = threading.Thread(target=_monitor_trade, args=(trade_id, expiry_timestamp), daemon=True)
+    t.start()
+    logger.info(f"[🧠] Spawned detection thread for {trade_id} (expiry={expiry_timestamp})")
