@@ -15,6 +15,7 @@ import pyautogui
 
 import shared  # 👈 shared singleton
 import win_loss  # 👈 win/loss detection module
+
 # ---------------------------
 # Configuration
 # ---------------------------
@@ -151,103 +152,109 @@ class TradeManager:
 
     # ---- worker ----
     def _trade_worker(self, trade_id, when, currency, direction, timeframe, group_id, martingale_level):
-    def _trade_worker(self, trade_id, when, currency, direction, timeframe, group_id, martingale_level):
-    try:
-        now = datetime.now(when.tzinfo)
-        delay = (when - now).total_seconds()
-        if delay > 0:
-            logger.info(f"[⏱️] Trade {trade_id}: waiting {delay:.1f}s until entry (level={martingale_level})")
-            time.sleep(delay)
-    except Exception:
-        pass
-
-    with _registry_lock:
-        grp = _active_groups.get(group_id)
-        if not grp or grp.get("stopped"):
-            logger.info(f"[⏹️] Trade {trade_id}: group stopped before entry; skipping.")
-            return
-
-    event = threading.Event()
-    placed_at = datetime.now(when.tzinfo)
-    trade_info = {
-        "id": trade_id,
-        "currency": currency,
-        "direction": direction,
-        "timeframe": timeframe,
-        "group_id": group_id,
-        "martingale_level": martingale_level,
-        "placed_at": placed_at,
-        "result": None,
-        "event": event
-    }
-
-    with _registry_lock:
-        _pending_trades[trade_id] = trade_info
-
-    logger.info(_random_log("firing_logs"))
-
-    # send main hotkey
-    try:
-        if direction.upper() == "BUY":
-            pyautogui.hotkey("shift", "w")
-        else:
-            pyautogui.hotkey("shift", "s")
-        logger.info(f"[🎯] Trade {trade_id}: main-hotkey sent ({direction}) at {placed_at.strftime('%H:%M:%S')} level={martingale_level}")
-    except Exception as e:
-        logger.error(f"[❌] Trade {trade_id}: failed main-hotkey: {e}")
-
-    # 🧠 Start intensive Win/Loss detection immediately after hotkey
-    expiry_seconds = _tf_to_seconds(timeframe)
-    expiration_time = time.time() + expiry_seconds
-    win_loss.start_trade_result_monitor(trade_id, expiration_time)
-    logger.info(f"[🔎] Win/Loss monitor scheduled for trade {trade_id} (expires in {expiry_seconds}s)")
-
-    # increase trade amount ONCE (martingale)
-    if martingale_level <= self.max_martingale:
-        inc_delay = random.randint(2, 40)
-        logger.info(f"[⌛] Trade {trade_id}: waiting {inc_delay}s before increase-hotkey (level={martingale_level})")
-        time.sleep(inc_delay)
         try:
-            logger.info(_random_log("martingale_logs"))
-            pyautogui.hotkey("shift", "d")
-            logger.info(f"[📈] Trade {trade_id}: increase-hotkey sent (level={martingale_level})")
-        except Exception as e:
-            logger.error(f"[❌] Trade {trade_id}: failed increase-hotkey: {e}")
+            now = datetime.now(when.tzinfo)
+            delay = (when - now).total_seconds()
+            if delay > 0:
+                logger.info(f"[⏱️] Trade {trade_id}: waiting {delay:.1f}s until entry (level={martingale_level})")
+                time.sleep(delay)
+        except Exception:
+            pass
 
-    # wait for result
-    wait_timeout = expiry_seconds + 5
-    got_result = event.wait(timeout=wait_timeout)
-
-    if got_result:
         with _registry_lock:
-            info = _pending_trades.get(trade_id)
-        result_text = info.get("result") if info else None
-        logger.info(f"[📣] Trade {trade_id}: result received -> {result_text}")
-        if result_text and result_text.strip().upper().startswith("WIN"):
-            logger.info(_random_log("win_logs"))
-            logger.info(f"[✅] Trade {trade_id} WIN — stopping martingale chain for group {group_id}")
+            grp = _active_groups.get(group_id)
+            if not grp or grp.get("stopped"):
+                logger.info(f"[⏹️] Trade {trade_id}: group stopped before entry; skipping.")
+                return
+
+        event = threading.Event()
+        placed_at = datetime.now(when.tzinfo)
+        trade_info = {
+            "id": trade_id,
+            "currency": currency,
+            "direction": direction,
+            "timeframe": timeframe,
+            "group_id": group_id,
+            "martingale_level": martingale_level,
+            "placed_at": placed_at,
+            "result": None,
+            "event": event
+        }
+
+        with _registry_lock:
+            _pending_trades[trade_id] = trade_info
+
+        logger.info(_random_log("firing_logs"))
+
+        # send main hotkey
+        try:
+            if direction.upper() == "BUY":
+                pyautogui.hotkey("shift", "w")
+            else:
+                pyautogui.hotkey("shift", "s")
+            logger.info(f"[🎯] Trade {trade_id}: main-hotkey sent ({direction}) at {placed_at.strftime('%H:%M:%S')} level={martingale_level}")
+        except Exception as e:
+            logger.error(f"[❌] Trade {trade_id}: failed main-hotkey: {e}")
+
+        # ---------------------------
+        # 🧠 Intensified Win/Loss detection for final second
+        # ---------------------------
+        expiry_seconds = _tf_to_seconds(timeframe)
+        expiration_time = time.time() + expiry_seconds
+        win_loss.start_trade_result_monitor(
+            trade_id,
+            expiration_time,
+            intensify_window=(expiration_time - 1.0, expiration_time + 1.0),
+            poll_interval=0.15
+        )
+        logger.info(f"[🔎] Win/Loss monitor scheduled for trade {trade_id} with intensify window at final second")
+        # ---------------------------
+
+        # increase trade amount ONCE (martingale)
+        if martingale_level <= self.max_martingale:
+            inc_delay = random.randint(2, 40)
+            logger.info(f"[⌛] Trade {trade_id}: waiting {inc_delay}s before increase-hotkey (level={martingale_level})")
+            time.sleep(inc_delay)
+            try:
+                logger.info(_random_log("martingale_logs"))
+                pyautogui.hotkey("shift", "d")
+                logger.info(f"[📈] Trade {trade_id}: increase-hotkey sent (level={martingale_level})")
+            except Exception as e:
+                logger.error(f"[❌] Trade {trade_id}: failed increase-hotkey: {e}")
+
+        # wait for result
+        wait_timeout = expiry_seconds + 5
+        got_result = event.wait(timeout=wait_timeout)
+
+        if got_result:
+            with _registry_lock:
+                info = _pending_trades.get(trade_id)
+            result_text = info.get("result") if info else None
+            logger.info(f"[📣] Trade {trade_id}: result received -> {result_text}")
+            if result_text and result_text.strip().upper().startswith("WIN"):
+                logger.info(_random_log("win_logs"))
+                logger.info(f"[✅] Trade {trade_id} WIN — stopping martingale chain for group {group_id}")
+                with _registry_lock:
+                    grp = _active_groups.get(group_id)
+                    if grp is not None:
+                        grp["stopped"] = True
+                    _pending_trades.pop(trade_id, None)
+                return
+            else:
+                logger.info(_random_log("loss_logs"))
+                logger.info(f"[↪️] Trade {trade_id} LOSS/OTHER — continuing to next martingale.")
+                with _registry_lock:
+                    _pending_trades.pop(trade_id, None)
+                return
+        else:
+            logger.warning(f"[❌] Trade {trade_id}: NO RESULT received within expiry. Stopping group {group_id}.")
+            logger.info(_random_log("loss_logs"))
             with _registry_lock:
                 grp = _active_groups.get(group_id)
-                if grp is not None:
+                if grp:
                     grp["stopped"] = True
                 _pending_trades.pop(trade_id, None)
             return
-        else:
-            logger.info(_random_log("loss_logs"))
-            logger.info(f"[↪️] Trade {trade_id} LOSS/OTHER — continuing to next martingale.")
-            with _registry_lock:
-                _pending_trades.pop(trade_id, None)
-            return
-    else:
-        logger.warning(f"[❌] Trade {trade_id}: NO RESULT received within expiry. Stopping group {group_id}.")
-        logger.info(_random_log("loss_logs"))
-        with _registry_lock:
-            grp = _active_groups.get(group_id)
-            if grp:
-                grp["stopped"] = True
-            _pending_trades.pop(trade_id, None)
-        return
-
 
     # ---- result API ----
     def _set_result_for_id(self, trade_id: str, result_text: str):
@@ -287,16 +294,11 @@ class TradeManager:
 
     # ---- handle Telegram /start and /stop ----
     def handle_command(self, cmd: str):
-        """
-        Handles commands like /start and /stop without breaking the core logic.
-        """
         try:
             if cmd.startswith("/start"):
                 logger.info("[✅] Trading started (command received)")
-                # Optional: self.enabled = True
             elif cmd.startswith("/stop"):
                 logger.info("[🛑] Trading stopped (command received)")
-                # Optional: self.enabled = False
             else:
                 logger.info(f"[ℹ️] Unknown command received: {cmd}")
         except Exception as e:
@@ -330,3 +332,4 @@ if __name__ == "__main__":
             logger.info(_random_log("idle_logs"))
     except KeyboardInterrupt:
         logger.info("[🛑] Core stopped by KeyboardInterrupt")
+    
