@@ -48,6 +48,14 @@ echo "[ℹ️] Chrome launcher started in background"
 python3 -u telegram_listener.py &
 echo "[ℹ️] Telegram listener started in background"
 
+
+# -------------------------
+# Start win_loss monitoring (optional for test)
+# -------------------------
+python3 -u win_loss.py &
+echo "[ℹ️] win_loss monitoring started in background"
+
+
 # -------------------------
 # Start core bot (with restart loop)
 # -------------------------
