@@ -195,6 +195,19 @@ class TradeManager:
         except Exception as e:
             logger.error(f"[❌] Trade {trade_id}: failed main-hotkey: {e}")
 
+
+        # --- Integrate with win_loss.py ---
+       try:
+          import win_loss
+       expiry_seconds = _tf_to_seconds(timeframe)
+            expiry_timestamp = time.time() + expiry_seconds
+              win_loss.start_trade_result_monitor(trade_id, expiry_timestamp)
+             logger.info(f"[🔗] Linked win_loss monitoring for trade {trade_id} (expires in {expiry_seconds}s)")
+         except Exception as e:
+         logger.warning(f"[⚠️] Failed to start win_loss monitor for {trade_id}: {e}")
+
+
+        
         # increase trade amount ONCE
         if martingale_level <= self.max_martingale:
             inc_delay = random.randint(2, 40)
