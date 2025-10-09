@@ -15,7 +15,7 @@ import pyautogui
 import shared  # 👈 shared singleton
 
 # ---------------------------
-# Configuration
+# Configuration.
 # ---------------------------
 TIMEFRAME_SECONDS = {
     "M1": 60,
