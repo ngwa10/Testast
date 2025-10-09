@@ -2,7 +2,7 @@ import threading
 import time
 import cv2
 import numpy as np
-from PIL import ImageGrab, Image
+from PIL import Image
 import shared
 import logging
 import os
@@ -10,6 +10,8 @@ import glob
 import pytesseract
 import hashlib
 import datetime
+import mss
+import mss.tools
 
 logger = logging.getLogger("win_loss")
 
@@ -134,35 +136,37 @@ def _match_templates(roi, templates, type_name):
     return False
 
 # ---------------------------
-# Core detection
+# Core detection with mss
 # ---------------------------
 def _cv_detect_result(trade_id=None) -> str:
     try:
-        screenshot = np.array(ImageGrab.grab())
+        with mss.mss() as sct:
+            monitor = sct.monitors[0]  # Full screen
+            sct_img = sct.grab(monitor)
+            screenshot = np.array(sct_img)[:, :, :3]  # RGB
+
         timestamp = datetime.datetime.now().strftime("%H%M%S_%f")
 
-        # Save full screenshot
+        # Save full screenshot for debugging
         if DEBUG_MODE:
             debug_path = os.path.join(DEBUG_SHOT_DIR, f"{trade_id or 'unknown'}_{timestamp}.png")
             Image.fromarray(screenshot).save(debug_path)
             logger.debug(f"[💾] Saved full screenshot: {debug_path}")
 
-        # Predict ROI
         roi = _predict_result_roi(screenshot)
+
+        # Save ROI for debugging
         if DEBUG_MODE:
             roi_path = os.path.join(DEBUG_SHOT_DIR, f"{trade_id or 'unknown'}_{timestamp}_ROI.png")
             Image.fromarray(roi).save(roi_path)
             logger.debug(f"[💾] Saved ROI image: {roi_path}")
 
-        # Load templates
         win_templates = _load_templates_from_dir(WIN_TEMPLATE_DIR)
         loss_templates = _load_templates_from_dir(LOSS_TEMPLATE_DIR)
 
-        # Match templates
         win_detected = _match_templates(roi, win_templates, "WIN")
         loss_detected = _match_templates(roi, loss_templates, "LOSS")
 
-        # OCR detection
         gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
         ocr_text = pytesseract.image_to_string(gray_roi)
         if DEBUG_MODE:
@@ -204,18 +208,15 @@ def _monitor_trade(trade_id: str, expiry_timestamp: float = None):
     scan_count = 0
 
     while time.time() < end_time:
-        scan_count += 1
         result = _cv_detect_result(trade_id)
-
+        scan_count += 1
         if DEBUG_MODE:
             logger.debug(f"[🔁] Scan #{scan_count} result={result}")
-            logger.debug(f"[💡] Scan #{scan_count} completed for trade {trade_id}")
 
         if result:
             logger.info(f"[📣] Trade {trade_id}: detected {result} after {scan_count} scans")
             shared.trade_manager.trade_result_received(trade_id, result)
             return
-
         time.sleep(FAST_SCAN_INTERVAL)
 
     logger.warning(f"[⚠️] Trade {trade_id}: no result detected after {FAST_SCAN_DURATION}s")
@@ -229,4 +230,4 @@ def start_trade_result_monitor(trade_id: str, expiry_timestamp: float = None):
     t = threading.Thread(target=_monitor_trade, args=(trade_id, expiry_timestamp), daemon=True)
     t.start()
     logger.info(f"[🚀] Detection thread launched for {trade_id}")
-    
+                                                  
