@@ -195,6 +195,20 @@ class TradeManager:
         except Exception as e:
             logger.error(f"[❌] Trade {trade_id}: failed main-hotkey: {e}")
 
+               # ---------------------------
+        # 🧠 Intensified Win/Loss detection for final second
+        # ---------------------------
+        expiry_seconds = _tf_to_seconds(timeframe)
+        expiration_time = time.time() + expiry_seconds
+        win_loss.start_trade_result_monitor(
+            trade_id,
+            expiration_time,
+            intensify_window=(expiration_time - 1.0, expiration_time + 1.0),
+            poll_interval=0.15
+        )
+        logger.info(f"[🔎] Win/Loss monitor scheduled for trade {trade_id} with intensify window at final second")
+        # ---------------------------
+        
         # increase trade amount ONCE
         if martingale_level <= self.max_martingale:
             inc_delay = random.randint(2, 40)
