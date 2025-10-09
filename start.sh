@@ -24,21 +24,6 @@ echo "[✅] VNC server started on :1 (${VNC_RESOLUTION})"
 ${NO_VNC_HOME}/utils/novnc_proxy --vnc localhost:5901 --listen 6080 &
 echo "[✅] noVNC started on port 6080"
 
-# -------------------------
-# Start PulseAudio with monitor sink (for audio detection)
-# -------------------------
-echo "[🔊] Starting PulseAudio..."
-pulseaudio --start
-
-# Create a null sink to capture audio from apps
-SINK_NAME="VNCOutput"
-pactl load-module module-null-sink sink_name=$SINK_NAME sink_properties=device.description=$SINK_NAME
-
-# List the monitor source for debugging
-echo "[ℹ️] Available PulseAudio sources:"
-pactl list short sources
-
-echo "[✅] Monitor audio device ready. Use '${SINK_NAME}.monitor' in win_loss.py for recording."
 
 # -------------------------
 # Wait for display and audio to be ready
