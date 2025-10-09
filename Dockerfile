@@ -47,6 +47,7 @@ RUN CHROME_VERSION=$(google-chrome --version | sed 's/[^0-9.]//g' | cut -d. -f1)
 
 RUN pip3 install --no-cache-dir \
     pillow>=9.2.0 \
+    mss \
     sounddevice \
     pyautogui \
     pytesseract \
