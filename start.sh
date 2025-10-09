@@ -31,6 +31,12 @@ echo "[✅] noVNC started on port 6080"
 sleep 5
 
 # -------------------------
+# Test screenshot capture
+# -------------------------
+echo "[🖼️] Testing screenshot capture..."
+python3 /home/dockuser/test_screenshot.py || echo "[⚠️] Screenshot test failed"
+
+# -------------------------
 # Start Chrome launcher
 # -------------------------
 python3 -u launcher.py &
