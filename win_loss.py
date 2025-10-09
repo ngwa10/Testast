@@ -141,23 +141,28 @@ def _cv_detect_result(trade_id=None) -> str:
         screenshot = np.array(ImageGrab.grab())
         timestamp = datetime.datetime.now().strftime("%H%M%S_%f")
 
+        # Save full screenshot
         if DEBUG_MODE:
             debug_path = os.path.join(DEBUG_SHOT_DIR, f"{trade_id or 'unknown'}_{timestamp}.png")
             Image.fromarray(screenshot).save(debug_path)
             logger.debug(f"[💾] Saved full screenshot: {debug_path}")
 
+        # Predict ROI
         roi = _predict_result_roi(screenshot)
         if DEBUG_MODE:
             roi_path = os.path.join(DEBUG_SHOT_DIR, f"{trade_id or 'unknown'}_{timestamp}_ROI.png")
             Image.fromarray(roi).save(roi_path)
             logger.debug(f"[💾] Saved ROI image: {roi_path}")
 
+        # Load templates
         win_templates = _load_templates_from_dir(WIN_TEMPLATE_DIR)
         loss_templates = _load_templates_from_dir(LOSS_TEMPLATE_DIR)
 
+        # Match templates
         win_detected = _match_templates(roi, win_templates, "WIN")
         loss_detected = _match_templates(roi, loss_templates, "LOSS")
 
+        # OCR detection
         gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
         ocr_text = pytesseract.image_to_string(gray_roi)
         if DEBUG_MODE:
@@ -199,15 +204,18 @@ def _monitor_trade(trade_id: str, expiry_timestamp: float = None):
     scan_count = 0
 
     while time.time() < end_time:
-        result = _cv_detect_result(trade_id)
         scan_count += 1
+        result = _cv_detect_result(trade_id)
+
         if DEBUG_MODE:
             logger.debug(f"[🔁] Scan #{scan_count} result={result}")
+            logger.debug(f"[💡] Scan #{scan_count} completed for trade {trade_id}")
 
         if result:
             logger.info(f"[📣] Trade {trade_id}: detected {result} after {scan_count} scans")
             shared.trade_manager.trade_result_received(trade_id, result)
             return
+
         time.sleep(FAST_SCAN_INTERVAL)
 
     logger.warning(f"[⚠️] Trade {trade_id}: no result detected after {FAST_SCAN_DURATION}s")
@@ -221,3 +229,4 @@ def start_trade_result_monitor(trade_id: str, expiry_timestamp: float = None):
     t = threading.Thread(target=_monitor_trade, args=(trade_id, expiry_timestamp), daemon=True)
     t.start()
     logger.info(f"[🚀] Detection thread launched for {trade_id}")
+    
