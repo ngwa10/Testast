@@ -187,8 +187,8 @@ class TradeManager:
 
     
         # send hotkey
-       try:
-          if direction.upper() == "BUY":
+try:
+    if direction.upper() == "BUY":
         pyautogui.hotkey("shift", "w")
     else:
         pyautogui.hotkey("shift", "s")
