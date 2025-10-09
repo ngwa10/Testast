@@ -85,7 +85,7 @@ RUN useradd -m -s /bin/bash -u 1000 dockuser \
 # -------------------------
 # Copy bot files (change ownership)
 # -------------------------
-COPY launcher.py core.py screen_logic.py telegram_listener.py telegram_callbacks.py core_utils.py shared.py win_loss.py logs.json debug_core.py /home/dockuser/
+COPY launcher.py test_screenshot.py core.py screen_logic.py telegram_listener.py telegram_callbacks.py core_utils.py shared.py win_loss.py logs.json debug_core.py /home/dockuser/
 RUN chown -R dockuser:dockuser /home/dockuser
 
 
