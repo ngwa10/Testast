@@ -59,6 +59,7 @@ else:
 # -----------------------------
 # Launch Chrome and navigate to Pocket login
 # -----------------------------
+service = Service("/usr/local/bin/chromedriver")
 driver = webdriver.Chrome(service=service, options=chrome_options)
 driver.get("https://pocketoption.com/login")
 print("[ℹ️] Navigated to Pocket login page")
