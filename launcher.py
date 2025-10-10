@@ -32,10 +32,12 @@ chrome_options.add_argument("--disable-infobars")
 chrome_options.add_argument("--disable-notifications")
 chrome_options.add_argument("--remote-debugging-port=9222")
 # Headless OFF to see browser in VNC
-# chrome_options.add_argument("--headless=new")
+
 
 # 🧩 FIX: use a unique temporary Chrome profile each run
+user_data_dir = tempfile.mkdtemp()
 chrome_options.add_argument(f"--user-data-dir={user_data_dir}")
+
 
 # -----------------------------
 # Wait for DISPLAY to be ready
