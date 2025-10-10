@@ -11,14 +11,14 @@ import pytesseract
 import hashlib
 import datetime
 import mss
-import mss.tools
+import re  # 🆕 for balance extraction
 
 logger = logging.getLogger("win_loss")
 
 # ---------------------------
 # Configuration
 # ---------------------------
-DEBUG_MODE = True  # 🔧 Toggle this to False for production
+DEBUG_MODE = True  # 🔧 Toggle False in production
 
 WIN_TEMPLATE_DIR = "/home/dockuser/templates/win/"
 LOSS_TEMPLATE_DIR = "/home/dockuser/templates/loss/"
@@ -27,7 +27,7 @@ MAX_TEMPLATES = 30
 TEMPLATE_MATCH_THRESHOLD = 0.8
 ROI_PAD = 20
 FAST_SCAN_INTERVAL = 0.1
-FAST_SCAN_DURATION = 3
+FAST_SCAN_DURATION = 6  # 🆕 6 seconds total (3s before + 3s after expiry)
 
 # Ensure directories exist
 os.makedirs(WIN_TEMPLATE_DIR, exist_ok=True)
@@ -107,6 +107,31 @@ def _predict_result_roi(screenshot):
     return roi
 
 # ---------------------------
+# OCR helpers
+# ---------------------------
+def _extract_balance_from_text(text: str) -> str:
+    """🆕 Try to extract balance-like values from OCR text."""
+    if not text:
+        return None
+
+    # Common money/number patterns: $12.34, 1,234.56, 1000.00
+    matches = re.findall(r"(\$?\d{1,3}(?:[,\d]{0,6})?(?:\.\d{1,2})?)", text)
+    if not matches:
+        return None
+
+    # Prioritize values with '$', then largest numeric
+    dollar_values = [m for m in matches if "$" in m]
+    if dollar_values:
+        return dollar_values[-1]  # latest balance reading
+
+    try:
+        numeric_values = [float(m.replace(",", "").replace("$", "")) for m in matches]
+        max_val = max(numeric_values)
+        return f"{max_val:,.2f}"
+    except Exception:
+        return None
+
+# ---------------------------
 # Template & OCR detection
 # ---------------------------
 def _capture_template_from_roi(roi, result_type):
@@ -143,34 +168,44 @@ def _cv_detect_result(trade_id=None) -> str:
         with mss.mss() as sct:
             monitor = sct.monitors[0]  # Full screen
             sct_img = sct.grab(monitor)
-            screenshot = np.array(sct_img)[:, :, :3]  # RGB
+            screenshot = cv2.cvtColor(np.array(sct_img), cv2.COLOR_BGRA2BGR)  # 🆕 fixed color format
 
         timestamp = datetime.datetime.now().strftime("%H%M%S_%f")
 
-        # Save full screenshot for debugging
+        # 🆕 OCR all visible text on screen
+        full_gray = cv2.cvtColor(screenshot, cv2.COLOR_BGR2GRAY)
+        full_text = pytesseract.image_to_string(full_gray)
+        balance = _extract_balance_from_text(full_text)
+        if full_text.strip():
+            logger.info(f"[💬] Full-screen OCR text:\n{full_text.strip()}")
+        if balance:
+            logger.info(f"[💰] Detected balance (approx): {balance}")
+
+        # Save full screenshot
         if DEBUG_MODE:
             debug_path = os.path.join(DEBUG_SHOT_DIR, f"{trade_id or 'unknown'}_{timestamp}.png")
-            Image.fromarray(screenshot).save(debug_path)
+            cv2.imwrite(debug_path, screenshot)
             logger.debug(f"[💾] Saved full screenshot: {debug_path}")
 
         roi = _predict_result_roi(screenshot)
 
-        # Save ROI for debugging
+        # Save ROI
         if DEBUG_MODE:
             roi_path = os.path.join(DEBUG_SHOT_DIR, f"{trade_id or 'unknown'}_{timestamp}_ROI.png")
-            Image.fromarray(roi).save(roi_path)
+            cv2.imwrite(roi_path, roi)
             logger.debug(f"[💾] Saved ROI image: {roi_path}")
 
+        # Template matching
         win_templates = _load_templates_from_dir(WIN_TEMPLATE_DIR)
         loss_templates = _load_templates_from_dir(LOSS_TEMPLATE_DIR)
-
         win_detected = _match_templates(roi, win_templates, "WIN")
         loss_detected = _match_templates(roi, loss_templates, "LOSS")
 
+        # OCR inside ROI
         gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
         ocr_text = pytesseract.image_to_string(gray_roi)
         if DEBUG_MODE:
-            logger.debug(f"[🔡] OCR text: {ocr_text.strip()!r}")
+            logger.debug(f"[🔡] ROI OCR text: {ocr_text.strip()!r}")
 
         ocr_win = any(s.startswith("+") for s in ocr_text.split())
         ocr_loss = "$0" in ocr_text
@@ -186,6 +221,7 @@ def _cv_detect_result(trade_id=None) -> str:
 
         if DEBUG_MODE:
             logger.debug("[ℹ️] No result detected this round")
+
     except Exception as e:
         logger.exception(f"[❌] Detection failed: {e}")
     return None
@@ -198,13 +234,13 @@ def _monitor_trade(trade_id: str, expiry_timestamp: float = None):
 
     if expiry_timestamp:
         now = time.time()
-        wait = expiry_timestamp - now - 1
+        wait = expiry_timestamp - now - 3  # 🆕 start scanning 3s before expiry
         if wait > 0:
             logger.info(f"[⏳] Waiting {wait:.2f}s before detection phase")
             time.sleep(wait)
 
-    logger.info(f"[⚡] Trade {trade_id}: detection window active (1s pre + 2s post expiry)")
-    end_time = (expiry_timestamp or time.time()) + 2
+    logger.info(f"[⚡] Trade {trade_id}: detection window active (3s pre + 3s post expiry)")
+    end_time = (expiry_timestamp or time.time()) + 3  # 🆕 continue 3s after expiry
     scan_count = 0
 
     while time.time() < end_time:
@@ -230,4 +266,4 @@ def start_trade_result_monitor(trade_id: str, expiry_timestamp: float = None):
     t = threading.Thread(target=_monitor_trade, args=(trade_id, expiry_timestamp), daemon=True)
     t.start()
     logger.info(f"[🚀] Detection thread launched for {trade_id}")
-                                                  
+        
