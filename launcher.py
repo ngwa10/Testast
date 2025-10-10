@@ -35,7 +35,6 @@ chrome_options.add_argument("--remote-debugging-port=9222")
 # chrome_options.add_argument("--headless=new")
 
 # 🧩 FIX: use a unique temporary Chrome profile each run
-user_data_dir = tempfile.mkdtemp()
 chrome_options.add_argument(f"--user-data-dir={user_data_dir}")
 
 # -----------------------------
