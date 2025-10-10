@@ -1,6 +1,7 @@
 # launcher.py
 import os
 import time
+import tempfile
 import pyperclip
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -33,7 +34,9 @@ chrome_options.add_argument("--remote-debugging-port=9222")
 # Headless OFF to see browser in VNC
 # chrome_options.add_argument("--headless=new")
 
-service = Service("/usr/local/bin/chromedriver")
+# 🧩 FIX: use a unique temporary Chrome profile each run
+user_data_dir = tempfile.mkdtemp()
+chrome_options.add_argument(f"--user-data-dir={user_data_dir}")
 
 # -----------------------------
 # Wait for DISPLAY to be ready
