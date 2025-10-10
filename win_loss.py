@@ -11,14 +11,15 @@ import pytesseract
 import hashlib
 import datetime
 import mss
-import re  # 🆕 for balance extraction
+import mss.tools
+import re
 
 logger = logging.getLogger("win_loss")
 
 # ---------------------------
 # Configuration
 # ---------------------------
-DEBUG_MODE = True  # 🔧 Toggle False in production
+DEBUG_MODE = True  # Toggle this to False for production
 
 WIN_TEMPLATE_DIR = "/home/dockuser/templates/win/"
 LOSS_TEMPLATE_DIR = "/home/dockuser/templates/loss/"
@@ -27,7 +28,8 @@ MAX_TEMPLATES = 30
 TEMPLATE_MATCH_THRESHOLD = 0.8
 ROI_PAD = 20
 FAST_SCAN_INTERVAL = 0.1
-FAST_SCAN_DURATION = 6  # 🆕 6 seconds total (3s before + 3s after expiry)
+PRE_EXPIRY_SCAN = 3
+POST_EXPIRY_SCAN = 3
 
 # Ensure directories exist
 os.makedirs(WIN_TEMPLATE_DIR, exist_ok=True)
@@ -78,65 +80,21 @@ def _save_template_if_needed(img, template_dir, prefix):
     return False
 
 # ---------------------------
-# ROI prediction
+# ROI prediction (optional)
 # ---------------------------
 def _predict_result_roi(screenshot):
-    if DEBUG_MODE:
-        logger.debug("[🎯] Predicting ROI for result detection")
-    hsv = cv2.cvtColor(screenshot, cv2.COLOR_BGR2HSV)
-    lower = np.array([0, 50, 150])
-    upper = np.array([180, 255, 255])
-    mask = cv2.inRange(hsv, lower, upper)
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    if not contours:
-        if DEBUG_MODE:
-            logger.debug("[🔍] No contours detected — returning full screen ROI")
-        return screenshot
-
-    rightmost = max(contours, key=lambda c: cv2.boundingRect(c)[0] + cv2.boundingRect(c)[2])
-    x, y, w, h = cv2.boundingRect(rightmost)
-    roi_x1 = max(x + w - ROI_PAD, 0)
-    roi_y1 = max(y - ROI_PAD, 0)
-    roi_x2 = min(x + w + ROI_PAD, screenshot.shape[1])
-    roi_y2 = min(y + h + ROI_PAD, screenshot.shape[0])
-    roi = screenshot[roi_y1:roi_y2, roi_x1:roi_x2]
-
-    if DEBUG_MODE:
-        logger.debug(f"[📐] ROI coordinates: ({roi_x1},{roi_y1})–({roi_x2},{roi_y2}) size={roi.shape}")
-    return roi
+    # Currently returns full screenshot
+    return screenshot
 
 # ---------------------------
-# OCR helpers
+# OCR Utilities
 # ---------------------------
-def _extract_balance_from_text(text: str) -> str:
-    """🆕 Try to extract balance-like values from OCR text."""
-    if not text:
-        return None
+def _extract_balance_from_text(ocr_text: str):
+    """Extract numeric value that may represent balance."""
+    matches = re.findall(r"\d{1,3}(?:,\d{3})*(?:\.\d+)?", ocr_text)
+    return matches[0] if matches else None
 
-    # Common money/number patterns: $12.34, 1,234.56, 1000.00
-    matches = re.findall(r"(\$?\d{1,3}(?:[,\d]{0,6})?(?:\.\d{1,2})?)", text)
-    if not matches:
-        return None
-
-    # Prioritize values with '$', then largest numeric
-    dollar_values = [m for m in matches if "$" in m]
-    if dollar_values:
-        return dollar_values[-1]  # latest balance reading
-
-    try:
-        numeric_values = [float(m.replace(",", "").replace("$", "")) for m in matches]
-        max_val = max(numeric_values)
-        return f"{max_val:,.2f}"
-    except Exception:
-        return None
-
-# ---------------------------
-# Template & OCR detection
-# ---------------------------
 def _capture_template_from_roi(roi, result_type):
-    if DEBUG_MODE:
-        logger.debug(f"[📸] Capturing new {result_type} template candidate")
     gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
     data = pytesseract.image_to_data(gray, output_type=pytesseract.Output.DICT)
     for i, text in enumerate(data['text']):
@@ -168,45 +126,30 @@ def _cv_detect_result(trade_id=None) -> str:
         with mss.mss() as sct:
             monitor = sct.monitors[0]  # Full screen
             sct_img = sct.grab(monitor)
-            screenshot = cv2.cvtColor(np.array(sct_img), cv2.COLOR_BGRA2BGR)  # 🆕 fixed color format
+            screenshot = np.array(sct_img)[:, :, :3]  # RGB
 
         timestamp = datetime.datetime.now().strftime("%H%M%S_%f")
 
-        # 🆕 OCR all visible text on screen
-        full_gray = cv2.cvtColor(screenshot, cv2.COLOR_BGR2GRAY)
-        full_text = pytesseract.image_to_string(full_gray)
-        balance = _extract_balance_from_text(full_text)
-        if full_text.strip():
-            logger.info(f"[💬] Full-screen OCR text:\n{full_text.strip()}")
-        if balance:
-            logger.info(f"[💰] Detected balance (approx): {balance}")
-
-        # Save full screenshot
+        # Save full screenshot for debugging
         if DEBUG_MODE:
             debug_path = os.path.join(DEBUG_SHOT_DIR, f"{trade_id or 'unknown'}_{timestamp}.png")
-            cv2.imwrite(debug_path, screenshot)
+            Image.fromarray(screenshot).save(debug_path)
             logger.debug(f"[💾] Saved full screenshot: {debug_path}")
 
         roi = _predict_result_roi(screenshot)
 
-        # Save ROI
-        if DEBUG_MODE:
-            roi_path = os.path.join(DEBUG_SHOT_DIR, f"{trade_id or 'unknown'}_{timestamp}_ROI.png")
-            cv2.imwrite(roi_path, roi)
-            logger.debug(f"[💾] Saved ROI image: {roi_path}")
-
-        # Template matching
         win_templates = _load_templates_from_dir(WIN_TEMPLATE_DIR)
         loss_templates = _load_templates_from_dir(LOSS_TEMPLATE_DIR)
+
         win_detected = _match_templates(roi, win_templates, "WIN")
         loss_detected = _match_templates(roi, loss_templates, "LOSS")
 
-        # OCR inside ROI
         gray_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
         ocr_text = pytesseract.image_to_string(gray_roi)
         if DEBUG_MODE:
-            logger.debug(f"[🔡] ROI OCR text: {ocr_text.strip()!r}")
+            logger.debug(f"[🔡] OCR text: {ocr_text.strip()!r}")
 
+        # Detect wins/losses
         ocr_win = any(s.startswith("+") for s in ocr_text.split())
         ocr_loss = "$0" in ocr_text
 
@@ -219,9 +162,13 @@ def _cv_detect_result(trade_id=None) -> str:
             _capture_template_from_roi(roi, "LOSS")
             return "LOSS"
 
+        # Capture balance
+        balance = _extract_balance_from_text(ocr_text)
+        if balance:
+            logger.info(f"[💰] Detected balance (approx): {balance}")
+
         if DEBUG_MODE:
             logger.debug("[ℹ️] No result detected this round")
-
     except Exception as e:
         logger.exception(f"[❌] Detection failed: {e}")
     return None
@@ -234,14 +181,14 @@ def _monitor_trade(trade_id: str, expiry_timestamp: float = None):
 
     if expiry_timestamp:
         now = time.time()
-        wait = expiry_timestamp - now - 3  # 🆕 start scanning 3s before expiry
+        wait = expiry_timestamp - now - 1
         if wait > 0:
             logger.info(f"[⏳] Waiting {wait:.2f}s before detection phase")
             time.sleep(wait)
 
-    logger.info(f"[⚡] Trade {trade_id}: detection window active (3s pre + 3s post expiry)")
-    end_time = (expiry_timestamp or time.time()) + 3  # 🆕 continue 3s after expiry
+    end_time = (expiry_timestamp or time.time()) + POST_EXPIRY_SCAN
     scan_count = 0
+    start_time = time.time() - PRE_EXPIRY_SCAN
 
     while time.time() < end_time:
         result = _cv_detect_result(trade_id)
@@ -255,7 +202,7 @@ def _monitor_trade(trade_id: str, expiry_timestamp: float = None):
             return
         time.sleep(FAST_SCAN_INTERVAL)
 
-    logger.warning(f"[⚠️] Trade {trade_id}: no result detected after {FAST_SCAN_DURATION}s")
+    logger.warning(f"[⚠️] Trade {trade_id}: no result detected after {PRE_EXPIRY_SCAN + POST_EXPIRY_SCAN}s")
     shared.trade_manager.trade_result_received(trade_id, "NO_RESULT")
 
 # ---------------------------
